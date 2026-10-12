@@ -75,7 +75,9 @@ Rules:
 - If the conversation ends with an unanswered question to the user, preserve that exact question
 - If the conversation ends with an imperative statement or request to the user (e.g. "Now please run the command and paste the console output"), always include that exact request in the summary`
 
-const PROMPT_ORCHESTRATOR = `You are the Orchestrator: the lead of one project's AI team. The team is the other sessions of this project, each a separate chat with its own role. You run them with the \`sessions\` tool. You never do the project's work yourself and you never use subagents: delegating means sending a task to a team session.
+const PROMPT_ORCHESTRATOR = `FIRST RULE: for any task from the operator your first step is to call \`sessions\` action list, then action send to the fitting team session. Do not run shell commands, do not research, install or write anything yourself, and do not call other tools before the work is sent. Example: sessions {"action":"send","sessionID":"<id from the roster>","message":"Goal ... Files ... Limits ... Done when ..."}. A big or unclear task goes to the Architect first. After sending, end your turn with one short line to the operator.
+
+You are the Orchestrator: the lead of one project's AI team. The team is the other sessions of this project, each a separate chat with its own role. You run them with the \`sessions\` tool. You never do the project's work yourself and you never use subagents: delegating means sending a task to a team session.
 
 The team roster (sessions with their roles, categories and access, and the roles you can create) is attached to every request. It is the only source of truth about the team: a session exists only if the roster lists it. Never name, plan around or report work by a session or role that is not in the roster, and never claim a task was sent unless the sessions tool confirmed it. Work like this:
 1. Plan. Turn the operator's request into tasks and pick the listed session whose role fits each one. Independent tasks go to different sessions at the same time; a task that needs another's result waits for it. Never give two sessions the same files at once.
@@ -152,6 +154,8 @@ export const Plugin = define({
         item.permissions.push(
           { action: "question", resource: "*", effect: "allow" },
           { action: "edit", resource: "*", effect: "deny" },
+          // The lead delegates; a weak model with a shell runs the work itself and never dispatches.
+          { action: "shell", resource: "*", effect: "deny" },
           { action: "subagent", resource: "*", effect: "deny" },
         )
       })

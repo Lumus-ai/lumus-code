@@ -203,7 +203,10 @@ const layer = Layer.effect(
     })
 
     const list = Effect.fn("NoteStore.list")(function* () {
-      const settled = yield* Effect.forEach(yield* names(), (name) => read(name).pipe(Effect.exit))
+      // A folder that cannot be read (missing, not allowed, not a directory) is an empty list:
+      // a failing list made weak models retry it instead of working.
+      const present = yield* names().pipe(Effect.orElseSucceed(() => new Set<Note.Slug>()))
+      const settled = yield* Effect.forEach(present, (name) => read(name).pipe(Effect.exit))
       return settled
         .flatMap((entry) => (Exit.isSuccess(entry) ? [entry.value] : []))
         .toSorted((a, b) => b.frontmatter.updated - a.frontmatter.updated)
