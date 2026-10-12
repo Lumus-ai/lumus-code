@@ -4,6 +4,8 @@ An AI coding agent for the terminal, with multiplayer rooms, a project AI team, 
 
 > **Provenance.** Lumus Code is based on [OpenCode](https://github.com/anomalyco/opencode) and [NeiP4n/opencode-plus-plus](https://github.com/NeiP4n/opencode-plus-plus), both MIT licensed. The original LICENSE and copyright notice are kept in [LICENSE](LICENSE). **Lumus Code is not built by or affiliated with the OpenCode team.** Internal package names still say `opencode` in many places so the code stays easy to merge with upstream.
 
+![Lumus Code home screen, Gemini theme](docs/screenshot-home.png)
+
 ## What is included
 
 From opencode-plus-plus (all kept):
