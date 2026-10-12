@@ -217,6 +217,15 @@ export const roles: readonly (RoleSpec & { id: string })[] = [
     readOnly: false,
   },
   {
+    id: "security",
+    name: "Security",
+    category: "Quality",
+    description: "Audits changes and dependencies for vulnerabilities, leaked secrets and unsafe defaults without editing them.",
+    rules:
+      "Role: security. Audit the change and the code it touches: injection, unsafe file or shell access, missing authorization, leaked secrets or tokens, risky dependencies, unsafe defaults. For each finding give severity, file and line, how it could be abused, and the fix. Never print a secret you find; name where it is. You do not edit project files.",
+    readOnly: true,
+  },
+  {
     id: "devops",
     name: "DevOps",
     category: "Build",
@@ -235,6 +244,20 @@ const member = (name: string, title: string): Member => ({
 
 // The teams opencode ships with.
 export const templates: readonly (TemplateSpec & { id: string })[] = [
+  {
+    id: "studio",
+    name: "Studio",
+    description: "Default team: architect, two developers, tester, reviewer, security and docs",
+    members: [
+      member("architect", "Architect"),
+      member("developer", "Developer 1"),
+      member("developer", "Developer 2"),
+      member("tester", "Tester"),
+      member("reviewer", "Reviewer"),
+      member("security", "Security"),
+      member("writer", "Docs"),
+    ],
+  },
   {
     id: "feature",
     name: "Feature",
