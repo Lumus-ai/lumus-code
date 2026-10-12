@@ -932,5 +932,30 @@ it.live("an external edit and command wait for the host, stay in the project, an
     const declined = yield* Fiber.join(command)
     expect(declined.status).toBe(403)
     expect(yield* Effect.promise(() => Bun.file(path.join(directory, "ran.txt")).exists())).toBe(false)
+
+    // a prompt for the host model waits for the host; declined means nothing is queued
+    expect((yield* post({ kind: "prompt", text: "  " })).status).toBe(400)
+    const denied = yield* post({ kind: "prompt", text: "build the thing" }).pipe(Effect.forkScoped)
+    const third = yield* nextRequest
+    expect(third.action).toBe("room.prompt")
+    expect(
+      (yield* call(`/api/room/${room.id}/guest/permission/${third.id}/reply`, {
+        method: "POST",
+        headers: ext,
+        body: { decision: "once", sessionID: session.id },
+      })).status,
+    ).toBe(403)
+    yield* reply(third.id, "reject")
+    expect((yield* Fiber.join(denied)).status).toBe(403)
+    const chat = yield* call(`/api/room/${room.id}/guest/message`, { headers: ext })
+    expect(JSON.stringify(chat.body.data)).not.toContain("build the thing")
+    // allowed: the text is admitted as a prompt labeled with the external author
+    const allowed = yield* post({ kind: "prompt", text: "build the thing" }).pipe(Effect.forkScoped)
+    const fourth = yield* nextRequest
+    expect(fourth.action).toBe("room.prompt")
+    yield* reply(fourth.id, "once")
+    expect((yield* Fiber.join(allowed)).status).toBe(200)
+    const after = yield* call(`/api/room/${room.id}/guest/message`, { headers: ext })
+    expect(JSON.stringify(after.body.data)).toContain("build the thing")
   }).pipe(Effect.scoped),
 )

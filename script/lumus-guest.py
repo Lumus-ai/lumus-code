@@ -7,6 +7,8 @@
   lumus-guest.py read   [count]                            -> last messages of the shared session
   lumus-guest.py answer <text>                             -> message-only post, never starts the host's model
   lumus-guest.py result <tool> <text>
+  lumus-guest.py prompt <text>                             -> ask the host model to do it; host must approve the full text
+  lumus-guest.py wait [max-seconds]                        -> wait until the host model stops, print the newest assistant/user lines
   lumus-guest.py command <shell command> [reason]          -> host must allow it
   lumus-guest.py edit   <relative path> <content-file> [reason]   -> host must allow it
 """
@@ -87,6 +89,23 @@ def main(a):
                 json.dump(sorted(seen), f)
         if not new:
             print("none")
+    elif cmd == "prompt":
+        post({"kind": "prompt", "text": a[1]})
+    elif cmd == "wait":
+        import time
+        s = state()
+        end = time.time() + (int(a[1]) if len(a) > 1 else 300)
+        time.sleep(3)
+        while True:
+            st, data = call("GET", f"{s['base']}/api/room/{s['room']}/guest/message", None, s["token"])
+            if st != 200:
+                print("ERROR", st, str(data)[:200]); sys.exit(1)
+            if not data.get("running") or time.time() > end:
+                break
+            time.sleep(5)
+        print("running" if data.get("running") else "idle")
+        for m in data["data"][-6:]:
+            print(f"[{m.get('author') or m['role']}] {m['text'][:1500]}")
     elif cmd == "answer":
         post({"kind": "answer", "text": a[1]})
     elif cmd == "result":

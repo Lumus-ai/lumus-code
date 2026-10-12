@@ -237,12 +237,12 @@ export interface Feed extends Schema.Schema.Type<typeof Feed> {}
 
 // What an outside agent may ask for through the external route. An answer or a tool result
 // only lands in the room chat. A command or an edit waits for the host's permission each time.
-export const ExternalKind = Schema.Literals(["answer", "tool_result", "command", "edit"])
+export const ExternalKind = Schema.Literals(["answer", "tool_result", "command", "edit", "prompt"])
 export type ExternalKind = typeof ExternalKind.Type
 
 export const ExternalPost = Schema.Struct({
   kind: ExternalKind,
-  // The answer or tool result text; for command and edit, an optional reason shown to the host.
+  // The answer or tool result text; for a prompt, the text the host model would run; for command and edit, an optional reason shown to the host.
   text: Schema.String.pipe(Schema.optional),
   // The tool a tool_result came from.
   tool: Schema.String.pipe(Schema.optional),

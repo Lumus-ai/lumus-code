@@ -50,6 +50,7 @@ An outside agent (for example an Instinct assistant) can join a room, post answe
    POST /api/room/:roomID/guest/external   (Authorization: Bearer <token>)
    {"kind": "answer",      "text": "..."}
    {"kind": "tool_result", "tool": "grep", "text": "..."}
+   {"kind": "prompt",     "text": "ask the Host model to do this"}   (the Host approves the full text first; then it runs as a prompt from the external author)
    {"kind": "command",     "command": "npm test", "text": "why I want this"}
    {"kind": "edit",        "path": "src/a.ts", "content": "...", "text": "why"}
    ```
@@ -59,6 +60,7 @@ In the TUI the Host writes `/instinct <text>` or `@instinct <text>` to talk to t
 Rules the server enforces:
 
 - `answer` and `tool_result` are **message-only**: they are queued in the session as messages from the external author and shown in the room chat as `<name> (external)`. The Host's model is not started by them. Note that the text sits in the session's inbox and the Host model will see it as context the next time it runs, so treat it as untrusted input.
+- `prompt` always waits for the Host's permission prompt (`room.prompt`) showing the text; denied means nothing is queued. Replies of the Host model are readable through `GET /api/room/:roomID/guest/message` (assistant text only, not tool outputs).
 - `command` and `edit` always wait for the **Host's permission prompt** (`room.run` / `room.edit`). The external guest cannot answer permission requests itself.
 - There is no unrestricted shell: nothing runs without a Host decision per command.
 - Edits must be a relative path inside the shared project (symlinks resolved, `.git` refused), at most 200,000 bytes.

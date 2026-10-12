@@ -82,7 +82,7 @@ const MEMBER_LIMIT = 100
 
 // Requests that run a command on the host for a guest. Only the host answers them, so a
 // cohost or helper cannot approve its own command.
-const HOST_ONLY = new Set(["room.run", "room.check", "room.edit"])
+const HOST_ONLY = new Set(["room.run", "room.check", "room.edit", "room.prompt"])
 
 // Control and format characters in a name would reach the host's terminal, notes and feed.
 const UNSAFE_NAME = /[\p{Cc}\p{Cf}\u2028\u2029]/u
@@ -471,8 +471,20 @@ export const RoomHandler = HttpApiBuilder.group(Api, "server.room", (handlers) =
           // the chat adds them from there; once promoted they come with the messages.
           const seen = new Set(messages.map((message) => message.id))
           const waiting = (yield* sessions.inbox(session.id).pipe(Effect.orElseSucceed(() => []))).flatMap((item) => {
-            if (item.type !== "synthetic" || seen.has(item.id)) return []
+            if (seen.has(item.id)) return []
             const room = item.payload.metadata?.room
+            // A prompt the host approved for the model, still waiting for its turn.
+            if (item.type === "user" && Predicate.isObject(room) && room.kind === "prompt" && Predicate.isObject(room.guest))
+              return [
+                {
+                  id: item.id,
+                  role: "user" as const,
+                  author: typeof room.guest.name === "string" ? room.guest.name : External.label("external"),
+                  text: item.payload.text,
+                  created: DateTime.toEpochMillis(item.time.created),
+                },
+              ]
+            if (item.type !== "synthetic") return []
             if (Predicate.isObject(room) && room.addressed === "instinct")
               return [
                 {
@@ -579,6 +591,22 @@ export const RoomHandler = HttpApiBuilder.group(Api, "server.room", (handlers) =
               Effect.catchTag("LocationNotFoundError", Effect.die),
               Effect.catch(() => Effect.fail(new ForbiddenError({ message: "The host did not allow this request" }))),
             )
+          if (body.kind === "prompt") {
+            const text = (body.text ?? "").trim()
+            if (text === "") return yield* new InvalidRequestError({ message: "Prompt is empty", field: "text" })
+            if (text.length > 20_000) return yield* new InvalidRequestError({ message: "Prompt is too long", field: "text" })
+            // The host sees the full text in the permission prompt; no answer, no model run.
+            yield* ask("room.prompt", text.slice(0, 2000), { prompt: text.slice(0, 2000) })
+            codes.record(joined.room.id, { kind: "external", who, detail: "prompt" })
+            yield* sessions
+              .prompt({
+                sessionID: session.id,
+                text: `[from ${who}, approved by the host] ${text}`,
+                metadata: { room: { id: joined.room.id, guest: joined.guest, external: true, kind: "prompt" } },
+              })
+              .pipe(Effect.catchTag("Session.NotFoundError", missingSession), Effect.orDie)
+            return { data: { kind: body.kind } }
+          }
           if (body.kind === "command") {
             const command = (body.command ?? "").trim()
             if (!command) return yield* new InvalidRequestError({ message: "Command is empty", field: "command" })
