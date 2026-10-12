@@ -3,6 +3,7 @@
 
   lumus-guest.py join   <base-url> <join-code> [name]      -> prints room id and token (saved to ~/.lumus-guest.json)
   lumus-guest.py poll                                      -> new "@instinct" lines from the host (marks them seen)
+  lumus-guest.py peek                                      -> same as poll but does not mark lines seen
   lumus-guest.py read   [count]                            -> last messages of the shared session
   lumus-guest.py answer <text>                             -> message-only post, never starts the host's model
   lumus-guest.py result <tool> <text>
@@ -68,7 +69,7 @@ def main(a):
         s = state()
         st, data = call("GET", f"{s['base']}/api/room/{s['room']}/guest/message", None, s["token"])
         print(st, json.dumps(data)[-int(a[1]) if len(a) > 1 else -4000:])
-    elif cmd == "poll":
+    elif cmd in ("poll", "peek"):
         s = state()
         st, data = call("GET", f"{s['base']}/api/room/{s['room']}/guest/message", None, s["token"])
         if st != 200:
@@ -79,9 +80,11 @@ def main(a):
                and m["text"].startswith("[host to @instinct]") and m["id"] not in seen]
         for m in new:
             print("NEW", m["id"], m["text"][len("[host to @instinct]"):].strip())
-            seen.add(m["id"])
-        with open(seen_file, "w") as f:
-            json.dump(sorted(seen), f)
+            if cmd == "poll":
+                seen.add(m["id"])
+        if cmd == "poll":
+            with open(seen_file, "w") as f:
+                json.dump(sorted(seen), f)
         if not new:
             print("none")
     elif cmd == "answer":
