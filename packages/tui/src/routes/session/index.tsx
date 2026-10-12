@@ -2028,6 +2028,9 @@ function SessionNoticeMessageV2(props: { message: SessionMessageInfo }) {
   const actor = () => (source() === "shell" ? "Shell" : Locale.titlecase(stringValue(metadata()?.agent) ?? "Subagent"))
   const text = () => {
     if (props.message.type === "system") return props.message.description ?? "Instructions updated"
+    // Room lines (the external agent's posts and the host's @instinct lines) show their text.
+    if (props.message.type === "synthetic" && metadata()?.room !== undefined && props.message.text)
+      return props.message.text
     if (props.message.type === "synthetic") return props.message.description ?? ""
     return ""
   }
