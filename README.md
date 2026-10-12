@@ -78,3 +78,15 @@ Do not run the full monorepo typecheck on a small machine: it needs well over 2 
 ## License
 
 MIT. Copyright (c) 2025 opencode, and the contributors of opencode-plus-plus and Lumus Code. See [LICENSE](LICENSE).
+
+## xKiro provider (free models)
+
+[xKiro](https://xkiro.com) is an OpenAI-compatible gateway with a free tier. Lumus Code can use it as a custom provider.
+
+1. Create a free API key at xkiro.com (no card needed for free models).
+2. `export XKIRO_API_KEY=...` (never commit it).
+3. Copy [docs/xkiro.example.jsonc](docs/xkiro.example.jsonc) into your config and pick `xkiro/qwen3-coder-plus`.
+
+Status: the config follows the documented custom OpenAI-compatible provider format and the model list comes from
+`https://api.xkiro.com/v1/models` (free tier). It has not been tested with a real key yet. Blocking requests on the gateway
+are cut at 95 seconds, so use streaming (the default in the TUI). Lumus Code is not affiliated with xKiro.

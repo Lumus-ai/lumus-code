@@ -1,0 +1,32 @@
+{
+  // xKiro gateway (https://xkiro.com), OpenAI-compatible. Put this in your Lumus Code config.
+  // Set XKIRO_API_KEY in your environment. Never commit the key.
+  "model": "xkiro/qwen3-coder-plus",
+  "providers": {
+    "xkiro": {
+      "name": "xKiro",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://api.xkiro.com/v1",
+        "apiKey": "{env:XKIRO_API_KEY}"
+      },
+      "models": {
+        "qwen3-coder-plus": {
+          "modelID": "qwen/qwen3-coder-plus:free",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+          "limit": { "context": 1048576, "output": 65536 }
+        },
+        "qwen3.7-plus": {
+          "modelID": "qwen/qwen3.7-plus:free",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+          "limit": { "context": 1000000, "output": 65536 }
+        },
+        "codestral": {
+          "modelID": "mistralai/codestral-2508",
+          "capabilities": { "tools": true, "input": ["text"], "output": ["text"] },
+          "limit": { "context": 256000, "output": 16384 }
+        }
+      }
+    }
+  }
+}
