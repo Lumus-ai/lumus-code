@@ -1,0 +1,125 @@
+# Installs Lumus Code for Windows with one command. In PowerShell:
+#
+#   irm https://raw.githubusercontent.com/Lumus-ai/lumus-code/main/lumus-code-install.ps1 | iex
+#
+# Missing Git comes from winget, Bun from bun.sh. The newest release is checked
+# out into %LOCALAPPDATA%\lumus-code and the `lumus-code` command is added to your
+# user PATH, so it works in this window right away. A regular opencode keeps the
+# `opencode` command. Running this again updates.
+# `irm ... | iex` runs this in the caller's PowerShell session, so a plain assignment here would
+# leave `Stop` behind and turn every later error in that window into a terminating one. The whole
+# body therefore runs in a child scope, where the preference dies with the script.
+& {
+$ErrorActionPreference = "Stop"
+
+$Repo = if ($env:LUMUS_CODE_REPO) { $env:LUMUS_CODE_REPO } else { "https://github.com/Lumus-ai/lumus-code.git" }
+$Dir = if ($env:LUMUS_CODE_DIR) { $env:LUMUS_CODE_DIR } else { Join-Path $env:LOCALAPPDATA "lumus-code" }
+$Bin = Join-Path $Dir "bin"
+$Branch = if ($env:LUMUS_CODE_BRANCH) { $env:LUMUS_CODE_BRANCH } else { "main" }
+
+# Programs installed below land in the machine or user PATH; this window only sees them after a refresh.
+# Anything the session already had is kept: rebuilding the variable from the two stored PATHs alone
+# drops entries a profile or a running tool added just for this window, and the installer then cannot
+# find what it installed a moment earlier.
+function Update-SessionPath {
+  $Known = @(
+    [Environment]::GetEnvironmentVariable("Path", "Machine"),
+    [Environment]::GetEnvironmentVariable("Path", "User"),
+    "$env:USERPROFILE\.bun\bin"
+  )
+  $Current = @($env:Path -split ";") + $Known
+  $env:Path = (@($Current | Where-Object { $_ } | Select-Object -Unique) -join ";")
+}
+
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+  if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+    throw "Git is required and winget is not available. Install Git from https://git-scm.com/download/win, then run this again."
+  }
+  Write-Host "Installing Git..."
+  winget install --id Git.Git -e --source winget --silent --accept-package-agreements --accept-source-agreements
+  Update-SessionPath
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    throw "Git was installed but is not on PATH yet. Open a new PowerShell and run this again."
+  }
+}
+
+if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
+  Write-Host "Installing Bun..."
+  powershell -NoProfile -ExecutionPolicy Bypass -c "irm bun.sh/install.ps1 | iex"
+  Update-SessionPath
+  if (-not (Get-Command bun -ErrorAction SilentlyContinue)) { throw "Bun did not install. See https://bun.sh for a manual install." }
+}
+
+$Source = Join-Path $Dir "src"
+if (Test-Path (Join-Path $Source ".git")) {
+  Write-Host "Updating $Source..."
+  git -C $Source fetch --tags --force origin
+} else {
+  Write-Host "Downloading Lumus Code into $Source..."
+  git clone --filter=blob:none $Repo $Source
+}
+if ($LASTEXITCODE -ne 0) { throw "git failed." }
+
+# A release tag is the normal path. Before the first release exists there is nothing to check
+# out, and an installer that only knows tags leaves a newcomer with no way in, so the branch
+# with the patches is the fallback.
+$Tag = git -C $Source tag -l "release/*" --sort=-v:refname | Select-Object -First 1
+if ($Tag) {
+  git -C $Source checkout --quiet --detach $Tag
+  if ($LASTEXITCODE -ne 0) { throw "git checkout failed." }
+  $Version = $Tag -replace "^release/", ""
+} else {
+  Write-Host "No release is published yet; installing branch $Branch."
+  git -C $Source fetch --force origin $Branch
+  if ($LASTEXITCODE -ne 0) { throw "git fetch failed." }
+  git -C $Source checkout --quiet --detach "origin/$Branch"
+  if ($LASTEXITCODE -ne 0) { throw "git checkout failed." }
+  $Version = "$Branch (no release yet)"
+}
+
+Write-Host "Installing dependencies..."
+Push-Location $Source
+# Only what the terminal app needs; the web and desktop apps pull far more.
+bun install --frozen-lockfile --filter ./packages/cli
+$Installed = $LASTEXITCODE
+Pop-Location
+if ($Installed -ne 0) { throw "bun install failed." }
+
+New-Item -ItemType Directory -Force -Path $Bin | Out-Null
+$Bun = (Get-Command bun).Source
+$Cli = Join-Path $Source "packages\cli"
+# The command is `lumus-code`, so a regular opencode on the same machine keeps `opencode`.
+# The preload goes by absolute path: bunfig.toml names it by package, which Bun resolves from
+# the directory the command is started in.
+# A console left on its OEM code page (866, 437 and so on) turns the interface's symbols into `?`, so the
+# command switches it to UTF-8 while it runs and puts the old code page back on exit.
+# The file is written as UTF-8 without a BOM, never as ASCII: the paths baked into it come from the
+# user's own profile, and a non-ASCII name (`C:\Users\Иван\...`) encoded as ASCII becomes `????`, which
+# leaves a command that cannot find bun or the sources at all. A BOM is not wanted either - cmd.exe
+# runs a BOM as part of the first line and the wrapper stops being a wrapper.
+$Wrapper = @"
+@echo off
+setlocal
+for /f "tokens=2 delims=:" %%c in ('chcp') do set /a LUMUS_CODE_CP=%%c
+chcp 65001 >nul
+set OPENCODE_COMMAND=lumus-code
+"$Bun" --preload="$Cli\node_modules\@opentui\solid\scripts\preload.js" "$Cli\src\index.ts" %*
+set LUMUS_CODE_EXIT=%ERRORLEVEL%
+if defined LUMUS_CODE_CP chcp %LUMUS_CODE_CP% >nul
+exit /b %LUMUS_CODE_EXIT%
+"@
+[System.IO.File]::WriteAllText((Join-Path $Bin "lumus-code.cmd"), $Wrapper, (New-Object System.Text.UTF8Encoding($false)))
+# Earlier versions of this installer took the name `opencode` in this folder; give it back.
+Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $Bin "opencode.cmd")
+
+$UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if (-not ($UserPath -split ";" | Where-Object { $_ -eq $Bin })) {
+  [Environment]::SetEnvironmentVariable("Path", (@($UserPath, $Bin) | Where-Object { $_ }) -join ";", "User")
+  Write-Host "Added $Bin to your PATH."
+}
+# `irm | iex` runs in this window, so the command works here without reopening it.
+if (-not ($env:Path -split ";" | Where-Object { $_ -eq $Bin })) { $env:Path = "$env:Path;$Bin" }
+
+Write-Host ""
+Write-Host "Lumus Code $Version is installed. Run: lumus-code"
+}

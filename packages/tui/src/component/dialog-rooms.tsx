@@ -1,0 +1,885 @@
+import { TextAttributes, type InputRenderable } from "@opentui/core"
+import { useTerminalDimensions } from "@opentui/solid"
+import { createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js"
+import type { RoomInfo, RoomJoinCode, RoomMemberView } from "@opencode/client/promise"
+import { hostname } from "node:os"
+import { useConfig } from "../config"
+import { useClient } from "../context/client"
+import { useData } from "../context/data"
+import { useLocal } from "../context/local"
+import { useProjects } from "../context/projects"
+import { Orchestra } from "@opencode/schema/orchestra"
+import { Keymap } from "../context/keymap"
+import { useRoute } from "../context/route"
+import { useTheme } from "../context/theme"
+import { useDialog } from "../ui/dialog"
+import { useToast } from "../ui/toast"
+import { errorMessage } from "../util/error"
+import { useT } from "../util/i18n"
+import { roomListChanged, sameRoom, useDeviceKey, useJoinedRooms, type JoinedRoom } from "../util/room"
+import { Button } from "./devtools-registry"
+import { roomClient, tellHostLeft, unlinkRoom } from "../util/room-guest"
+import { DISCOVERY_PORTS, readServer, scanRooms, type FoundRoom } from "@opencode/client/room-discovery"
+
+// Host: the rooms this computer shares. A room is one session other devices
+// join with a short code; only this computer's AI answers in it.
+export function DialogHost(props: { onClose?: () => void }) {
+  const dialog = useDialog()
+  const client = useClient()
+  const data = useData()
+  const projects = useProjects()
+  const local = useLocal()
+  const route = useRoute()
+  const theme = useTheme().surface("dialog")
+  const toast = useToast()
+  const t = useT()
+  const [rooms, { refetch }] = createResource(() => client.api.room.list())
+  const [server, { refetch: reread }] = createResource(() => client.api.server.info())
+  const [codes, setCodes] = createSignal<Readonly<Record<string, RoomJoinCode & { until: number }>>>({})
+  const [armed, setArmed] = createSignal<string>()
+  const [busy, setBusy] = createSignal(false)
+  // Drives the join code countdown while the window is open.
+  const [now, setNow] = createSignal(Date.now())
+  onMount(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    onCleanup(() => clearInterval(timer))
+  })
+
+  const sessionID = () => (route.data.type === "session" ? route.data.sessionID : undefined)
+  // A resource read after a failed fetch throws; the toast already reported the failure.
+  const hosted = () => (rooms.error ? undefined : rooms()) ?? []
+  const shared = () => hosted().some((room) => room.sessionID === sessionID())
+  // Guests need an address they can reach. Loopback only works on this machine, and
+  // container bridges (172.16/12), TUN adapters (198.18/15) and link-local addresses are
+  // usually not the network other devices are on; they are shown only when nothing else is.
+  const listening = () =>
+    (server.state === "ready" ? server().urls : [])
+      .map((url) => new URL(url).host)
+      .filter((host) => !/^(localhost|127\.|\[::1\])/.test(host))
+  const virtual = (host: string) => /^(169\.254\.|172\.(1[6-9]|2\d|3[01])\.|198\.1[89]\.)/.test(host)
+  const preferred = () => listening().filter((host) => !virtual(host))
+  const addresses = () => (preferred().length > 0 ? preferred() : listening())
+
+  const run = async (action: () => Promise<unknown>) => {
+    setBusy(true)
+    setArmed()
+    await action()
+      .then(() => refetch())
+      .catch((error: unknown) => toast.show({ message: errorMessage(error), variant: "error" }))
+    roomListChanged()
+    setBusy(false)
+  }
+
+  const issue = async (roomID: string) => {
+    const issued = await client.api.room.code({ roomID })
+    setNow(Date.now())
+    setCodes((previous) => ({ ...previous, [roomID]: { ...issued, until: Date.now() + issued.expires_in * 1000 } }))
+  }
+
+  // The project the open session belongs to.
+  const project = () => {
+    const session = sessionID() ? data.session.get(sessionID()!) : undefined
+    if (!session) return
+    return Orchestra.ownerOf(projects.list(), session.location.directory, projects.owner(session.id))
+  }
+
+  // A new room is useless without a code, so hosting hands one out right away. A project
+  // room shares every session under the project directory; the open session opens first.
+  const share = (whole: boolean) => {
+    const id = sessionID()
+    if (!id) return
+    const target = whole ? project() : undefined
+    void run(async () => {
+      // Guests prompt the session as it is stored. One that never ran has no model yet and
+      // would run on the first model of the host's catalog, not the one picked here.
+      const selected = local.model.current()
+      if (!data.session.get(id)?.model && selected)
+        await client.api.session.switchModel({
+          sessionID: id,
+          model: { providerID: selected.providerID, id: selected.modelID, variant: local.model.variant.current() },
+        })
+      const room = await client.api.room.create({
+        sessionID: id,
+        name: target?.name ?? (data.session.get(id)?.title || undefined),
+        directory: target?.directory,
+      })
+      await issue(room.id)
+    })
+  }
+
+  // One click for `service set hostname 0.0.0.0` and `service restart`; the client reconnects
+  // to the replacement service, which then reports its network addresses.
+  const openToNetwork = (open: () => Promise<void>) => {
+    setBusy(true)
+    toast.show({ variant: "info", message: t("Restarting the service for the network…"), duration: 30000 })
+    void open()
+      .then(() => {
+        toast.show({ variant: "success", message: t("The service now listens on the network") })
+        void reread()
+      })
+      .catch((error: unknown) => toast.show({ message: errorMessage(error), variant: "error" }))
+      .finally(() => setBusy(false))
+  }
+
+  const close = (room: RoomInfo) => {
+    if (armed() !== room.id) return setArmed(room.id)
+    void run(() => client.api.room.remove({ roomID: room.id }))
+  }
+
+  return (
+    <box paddingLeft={2} paddingRight={2} paddingBottom={1} gap={1}>
+      <Header title={t("Host")} onClose={props.onClose} />
+      <Show when={server.error}>
+        {(error) => (
+          <text fg={theme.text.feedback.error.base} wrapMode="word">
+            {t("Could not read this server's addresses: {error}", { error: errorMessage(error()) })}
+          </text>
+        )}
+      </Show>
+      <Show
+        when={addresses().length > 0}
+        fallback={
+          <Show when={server.state === "ready"}>
+            <Show
+              when={client.openToNetwork}
+              fallback={
+                <text fg={theme.text.feedback.warning.base} wrapMode="word">
+                  {t(
+                    "This server only listens on this machine, so other devices cannot connect yet. Run `{command} service set hostname 0.0.0.0` and `{command} service restart`.",
+                    { command: process.env.OPENCODE_COMMAND || "opencode" },
+                  )}
+                </text>
+              }
+            >
+              {(open) => (
+                <box>
+                  <text fg={theme.text.feedback.warning.base} wrapMode="word">
+                    {t(
+                      "This server only listens on this machine, so other devices cannot connect yet. Opening it to the network restarts the service once; running sessions are interrupted.",
+                    )}
+                  </text>
+                  <box flexDirection="row">
+                    <Button variant="primary" disabled={busy()} onClick={() => openToNetwork(open())}>
+                      {t("Open to the network")}
+                    </Button>
+                  </box>
+                </box>
+              )}
+            </Show>
+          </Show>
+        }
+      >
+        <Labeled label={t("Address")}>
+          <box>
+            <For each={addresses()}>
+              {(address) => (
+                <text fg={theme.text.base} attributes={TextAttributes.BOLD}>
+                  {address}
+                </text>
+              )}
+            </For>
+          </box>
+        </Labeled>
+        <Show when={preferred().length === 0}>
+          <text fg={theme.text.feedback.warning.base} wrapMode="word">
+            {t("Only virtual adapters (Docker, WSL, VPN) were found; other devices may not reach these addresses.")}
+          </text>
+        </Show>
+        <FirewallHelp ports={[...new Set(addresses().map((address) => Number(address.split(":").at(-1))))]} />
+      </Show>
+      <Show
+        when={sessionID()}
+        fallback={<text fg={theme.text.muted}>{t("Open a session to host it as a room.")}</text>}
+      >
+        <Show when={!shared()}>
+          <box flexDirection="row" gap={1}>
+            <Button variant="primary" disabled={busy()} onClick={() => share(false)}>
+              {t("Host this session")}
+            </Button>
+            <Show when={project()}>
+              {(item) => (
+                <Button disabled={busy()} onClick={() => share(true)}>
+                  {t("Host project {name}", { name: item().name })}
+                </Button>
+              )}
+            </Show>
+          </box>
+        </Show>
+      </Show>
+      <For each={hosted()}>
+        {(room) => (
+          <box>
+            <Labeled label={t("Room")}>
+              <text fg={theme.text.base} attributes={TextAttributes.BOLD} wrapMode="none" truncate>
+                {room.name}
+                <span
+                  style={{ fg: theme.text.muted }}
+                >{` · ${room.directory ? t("whole project") : t("one session")}`}</span>
+              </text>
+            </Labeled>
+            <Show
+              when={!room.open && codes()[room.id]}
+              fallback={
+                <Labeled label={t("Join code")}>
+                  <text fg={theme.text.muted}>{room.open ? t("not needed") : t("none yet")}</text>
+                </Labeled>
+              }
+            >
+              {(issued) => (
+                <Labeled label={t("Join code")}>
+                  <text fg={theme.text.base}>
+                    <span style={{ bold: true }}>{issued().code}</span>
+                    <Show
+                      when={issued().until > now()}
+                      fallback={<span style={{ fg: theme.text.feedback.warning.base }}>{"  " + t("expired")}</span>}
+                    >
+                      <span style={{ fg: theme.text.muted }}>
+                        {"  " + t("expires in {time}", { time: countdown(issued().until - now()) })}
+                      </span>
+                    </Show>
+                  </text>
+                </Labeled>
+              )}
+            </Show>
+            <Setting
+              label={t("Entry")}
+              help={t("Whether guests need the join code or may join straight from the room list.")}
+            >
+              <Button
+                disabled={busy()}
+                onClick={() => void run(() => client.api.room.update({ roomID: room.id, open: !room.open }))}
+              >
+                {room.open ? t("Without a code") : t("With a code")}
+              </Button>
+            </Setting>
+            <Setting label={t("New guests")} help={t(ROLE_HELP)}>
+              <Button
+                disabled={busy()}
+                onClick={() =>
+                  void run(() => client.api.room.update({ roomID: room.id, defaultRole: nextRole(joinRole(room)) }))
+                }
+              >
+                {t(ROLE_LABEL[joinRole(room)])}
+              </Button>
+            </Setting>
+            <Setting label={t("People")} help={t("Who joined, their roles; remove or ban a guest.")}>
+              <Button
+                onClick={() => {
+                  dialog.replace(
+                    () => <DialogPeople roomID={room.id} name={room.name} onClose={() => dialog.clear()} />,
+                    undefined,
+                    { size: "large" },
+                  )
+                  dialog.setCentered(true)
+                }}
+              >
+                {t("Open")}
+              </Button>
+            </Setting>
+            <Setting
+              label={t("AI outreach")}
+              help={t(
+                "Where this session's AI may post on its own: rooms you linked, or any room it finds, asking you before each send.",
+              )}
+            >
+              <Button
+                disabled={busy()}
+                onClick={() =>
+                  void run(() =>
+                    client.api.room.update({ roomID: room.id, ai: room.ai === "linked" ? "discovered" : "linked" }),
+                  )
+                }
+              >
+                {room.ai === "linked" ? t("Linked rooms only") : t("Any room it finds")}
+              </Button>
+            </Setting>
+            <box flexDirection="row" gap={1} paddingTop={1}>
+              <Show when={!room.open}>
+                <Button variant="primary" disabled={busy()} onClick={() => void run(() => issue(room.id))}>
+                  {codes()[room.id] ? t("New join code") : t("Get join code")}
+                </Button>
+              </Show>
+              <Button disabled={busy()} onLeave={() => setArmed()} onClick={() => close(room)}>
+                {armed() === room.id ? t("Click again to stop hosting") : t("Stop hosting")}
+              </Button>
+            </box>
+            <Show when={room.open || codes()[room.id]}>
+              <text fg={theme.text.muted} wrapMode="word">
+                {room.open
+                  ? t("On the other device open Connect and pick this room, or enter the address.")
+                  : t("On the other device open Connect, pick this room or enter the address, then the join code.")}
+              </text>
+            </Show>
+          </box>
+        )}
+      </For>
+      <Show when={rooms.error}>
+        <text fg={theme.text.feedback.error.base}>{errorMessage(rooms.error)}</text>
+      </Show>
+    </box>
+  )
+}
+
+// Connect: rooms other computers host. The local network is scanned when the
+// window opens; any room can also be reached by address, with the join code
+// unless its host lets guests in without one.
+export function DialogConnect(props: { onClose?: () => void }) {
+  const client = useClient()
+  const dialog = useDialog()
+  const route = useRoute()
+  const theme = useTheme().surface("dialog")
+  const config = useConfig().data
+  const dimensions = useTerminalDimensions()
+  const t = useT()
+  const [saved, updateSaved] = useJoinedRooms()
+  const deviceKey = useDeviceKey()
+  const [found, { refetch: rescan, mutate: setFound }] = createResource(() => scanRooms())
+  const [armed, setArmed] = createSignal<string>()
+  const [busy, setBusy] = createSignal(false)
+  const [joinError, setJoinError] = createSignal<string>()
+  const fields: { address?: InputRenderable; code?: InputRenderable; name?: InputRenderable } = {}
+
+  const enter = (url: string, request: { code?: string; roomID?: string }) => {
+    setBusy(true)
+    setJoinError()
+    void deviceKey()
+      .then((device) =>
+        roomClient({ url, token: "" }).room.join({ ...request, name: fields.name?.value.trim() || hostname(), device }),
+      )
+      .then(async (joined) => {
+        const room = { url, roomID: joined.room.id }
+        await updateSaved((draft) => {
+          draft.joined = [
+            ...draft.joined.filter((item) => !sameRoom(item, room)),
+            { ...room, name: joined.room.name, token: joined.token, guest: joined.guest.name },
+          ]
+        })
+        open(room)
+      })
+      .catch((error: unknown) => setJoinError(errorMessage(error)))
+      .finally(() => setBusy(false))
+  }
+
+  // With a code the host decides the room; without one the address must lead to
+  // a single open room, and its rooms join the list above when there are several.
+  const join = () => {
+    const address = fields.address?.value.trim() ?? ""
+    const code = fields.code?.value.trim() ?? ""
+    if (!address) return setJoinError(t("Enter the host's address"))
+    const url = withPort(/^https?:\/\//.test(address) ? address : `http://${address}`)
+    if (!url) return setJoinError(t("Add the host's port: 192.168.1.5:PORT"))
+    if (code) return enter(url, { code })
+    setBusy(true)
+    setJoinError()
+    void readServer(url)
+      .then((server) => {
+        const rooms = server.rooms
+        setFound((previous) => [...(previous ?? []).filter((item) => item.url !== url), server])
+        const unlocked = rooms.filter((room) => room.open)
+        if (rooms.length === 0) return setJoinError(t("No rooms at this address"))
+        if (unlocked.length === 1 && rooms.length === 1) return enter(url, { roomID: unlocked[0].id })
+        if (unlocked.length === 0 && rooms.length === 1)
+          return setJoinError(t("This room needs the join code its host shows"))
+        setJoinError(t("Pick a room above: this host shares several"))
+      })
+      .catch((error: unknown) => setJoinError(errorMessage(error)))
+      .finally(() => setBusy(false))
+  }
+
+  // A bare IP takes this computer's server port: hosts usually run the same setup, and
+  // without it the URL would silently point at port 80.
+  const withPort = (url: string) => {
+    const parsed = new URL(url)
+    if (parsed.port) return url
+    const own = found()?.find((server) => server.own)
+    if (!own) return undefined
+    parsed.port = new URL(own.url).port
+    return parsed.origin
+  }
+
+  const order = ["address", "code", "name"] as const
+  const cycle = (delta: number) => {
+    const index = order.findIndex((key) => fields[key]?.focused)
+    fields[order[(index + delta + order.length) % order.length]]?.focus()
+  }
+  Keymap.createLayer(() => ({
+    mode: "modal",
+    commands: [
+      { bind: "tab", title: "Next field", group: "Connect", run: () => cycle(1) },
+      { bind: "shift+tab", title: "Previous field", group: "Connect", run: () => cycle(-1) },
+    ],
+  }))
+  onMount(() =>
+    setTimeout(() => {
+      if (fields.address && !fields.address.isDestroyed) fields.address.focus()
+    }, 1),
+  )
+
+  // An open room joins at once; any other only lacks the code: fill its address and move to the code field.
+  const pick = (room: FoundRoom) => {
+    if (room.open) return enter(room.url, { roomID: room.id })
+    if (fields.address) fields.address.value = new URL(room.url).host
+    setJoinError()
+    fields.code?.focus()
+  }
+
+  // A joined room opens where a session would and stays in the left panel under Multiplayer.
+  const open = (room: Pick<JoinedRoom, "url" | "roomID">) => {
+    dialog.clear()
+    route.navigate({ type: "room", url: room.url, roomID: room.roomID })
+  }
+
+  const leave = (room: JoinedRoom) => {
+    const key = `${room.url}#${room.roomID}`
+    if (armed() !== key) return setArmed(key)
+    setArmed()
+    void tellHostLeft(room)
+    void unlinkRoom(client.api, room)
+    void updateSaved((draft) => {
+      draft.joined = draft.joined.filter((item) => !sameRoom(item, room))
+    })
+  }
+
+  const field = (key: "address" | "code" | "name", label: string, placeholder: string) => (
+    <Labeled label={label}>
+      <input
+        width={36}
+        cursorStyle={config.cursor}
+        ref={(element: InputRenderable) => {
+          fields[key] = element
+        }}
+        onMouseDown={() => fields[key]?.focus()}
+        onSubmit={join}
+        placeholder={placeholder}
+        placeholderColor={theme.text.muted}
+        textColor={theme.text.formfield.base}
+        focusedTextColor={theme.text.formfield.focused}
+        cursorColor={theme.text.formfield.focused}
+        backgroundColor={theme.background.formfield.base}
+        focusedBackgroundColor={theme.background.formfield.focused}
+      />
+    </Labeled>
+  )
+
+  return (
+    <box paddingLeft={2} paddingRight={2} paddingBottom={1} gap={1}>
+      <Header title={t("Connect")} onClose={props.onClose} />
+      {/* Small terminals cut the window off; scrolling keeps the address fields reachable. */}
+      <scrollbox
+        maxHeight={Math.max(8, dimensions().height - 8)}
+        contentOptions={{ minHeight: 0, gap: 1 }}
+        scrollbarOptions={{ visible: false }}
+      >
+        <Section title={t("Join by address")} />
+        {field("address", t("Address"), t("IP or IP:port, e.g. 192.168.1.5"))}
+        {field("code", t("Join code"), t("e.g. ABCD-EFGH, empty if not needed"))}
+        {field("name", t("Your name"), t("{name} (default)", { name: hostname() }))}
+        <Show when={joinError()}>
+          {(message) => (
+            <text fg={theme.text.feedback.error.base} wrapMode="word">
+              {message()}
+            </text>
+          )}
+        </Show>
+        <box flexDirection="row">
+          <Button variant="primary" disabled={busy()} onClick={join}>
+            {t("Join")}
+          </Button>
+        </box>
+
+        <Section title={t("Rooms on this network")} />
+        <box flexDirection="row" gap={1}>
+          <text fg={theme.text.muted}>
+            {found.loading
+              ? t("Searching…")
+              : found()?.length
+                ? t("Servers found: {count}", { count: found()!.length })
+                : t("No servers found")}
+          </text>
+          <Button disabled={found.loading} onClick={() => void rescan()}>
+            {t("Search again")}
+          </Button>
+        </box>
+        {/* Every server that answered, with its rooms; one sharing none shows so the operator knows it was reached. */}
+        <For each={found() ?? []}>
+          {(server) => (
+            <box>
+              <text fg={theme.text.muted} wrapMode="none" truncate>
+                {`${server.host} · ${new URL(server.url).host}${server.own ? ` · ${t("this computer")}` : ""}`}
+              </text>
+              <For each={server.rooms}>
+                {(room) => (
+                  <box flexDirection="row" gap={1} paddingLeft={2}>
+                    <text fg={theme.text.base} attributes={TextAttributes.BOLD}>
+                      {room.name ?? t("Room, needs a code")}
+                    </text>
+                    <box flexGrow={1} />
+                    <Button variant="primary" disabled={busy()} onClick={() => pick(room)}>
+                      {room.open ? t("Join") : t("Select")}
+                    </Button>
+                  </box>
+                )}
+              </For>
+              <Show when={server.rooms.length === 0}>
+                <box paddingLeft={2}>
+                  <text fg={theme.text.muted} wrapMode="word">
+                    {t("No rooms hosted yet: on that computer open a session and press + Host.")}
+                  </text>
+                </box>
+              </Show>
+            </box>
+          )}
+        </For>
+        <Show when={!found.loading && !found()?.length}>
+          <text fg={theme.text.muted} wrapMode="word">
+            {t(
+              "Not found? Both computers must be on one network, and on Windows opencode must be allowed in the firewall.",
+            )}
+          </text>
+        </Show>
+        <FirewallHelp ports={[]} />
+
+        <Show when={saved.joined.length > 0}>
+          <Section title={t("Joined rooms")} />
+        </Show>
+        <For each={saved.joined}>
+          {(room) => (
+            <box flexDirection="row" gap={1}>
+              <text fg={theme.text.base} attributes={TextAttributes.BOLD}>
+                {room.name}
+              </text>
+              <text fg={theme.text.muted}>{`${new URL(room.url).host} · ${t("as {name}", { name: room.guest })}`}</text>
+              <box flexGrow={1} />
+              <Button variant="primary" onClick={() => open(room)}>
+                {t("Open")}
+              </Button>
+              <Button onLeave={() => setArmed()} onClick={() => leave(room)}>
+                {armed() === `${room.url}#${room.roomID}` ? t("Click again to leave") : t("Leave")}
+              </Button>
+            </box>
+          )}
+        </For>
+      </scrollbox>
+    </box>
+  )
+}
+
+type RoomRole = RoomMemberView["role"]
+
+export const ROLE_LABEL = { viewer: "Viewer", member: "Member", helper: "Helper", cohost: "Cohost" } as const
+const ROLE_HELP =
+  "Viewers only watch, members also write and start sessions, helpers also allow or deny the AI's requests, cohosts also pick the model and agent and run commands."
+const ROLES = ["viewer", "member", "helper", "cohost"] as const
+
+export function nextRole(role: RoomRole) {
+  return ROLES[(ROLES.indexOf(role) + 1) % ROLES.length]
+}
+
+// Rooms saved before roles existed: guests who could answer approvals join as helpers.
+function joinRole(room: RoomInfo): RoomRole {
+  return room.defaultRole ?? (room.guestApprovals ? "helper" : "member")
+}
+
+// The people of one hosted room: who is connected, what each may do, and the guests
+// kept out. Clicking a role steps through the roles; removing and banning ask twice.
+export function DialogPeople(props: { roomID: string; name: string; onClose?: () => void }) {
+  const client = useClient()
+  const theme = useTheme().surface("dialog")
+  const toast = useToast()
+  const t = useT()
+  const [members, { refetch: rereadMembers, mutate: setMembers }] = createResource(() =>
+    client.api.room.member.list({ roomID: props.roomID }),
+  )
+  const [bans, { refetch: rereadBans }] = createResource(() => client.api.room.ban.list({ roomID: props.roomID }))
+  const [armed, setArmed] = createSignal<string>()
+  // A resource read after a failed fetch throws, so failures show as text and the lists as empty.
+  const listed = () => (members.error ? undefined : members.latest) ?? []
+  const banned = () => (bans.error ? undefined : bans.latest) ?? []
+  // Guests report in every couple of seconds; reading as often keeps "online" honest.
+  onMount(() => {
+    const timer = setInterval(() => void rereadMembers(), 2000)
+    onCleanup(() => clearInterval(timer))
+  })
+
+  const act = (action: () => Promise<unknown>) =>
+    void action()
+      .then(() => Promise.all([rereadMembers(), rereadBans()]))
+      .catch((error: unknown) => toast.show({ message: errorMessage(error), variant: "error" }))
+
+  const cycle = (member: RoomMemberView) => {
+    const role = nextRole(member.role)
+    setMembers((list) => list?.map((item) => (item.id === member.id ? { ...item, role } : item)))
+    act(() => client.api.room.member.update({ roomID: props.roomID, guestID: member.id, role }))
+  }
+
+  // The first click arms the button and the second acts.
+  const confirm = (key: string, action: () => Promise<unknown>) => {
+    if (armed() !== key) return setArmed(key)
+    setArmed()
+    act(action)
+  }
+
+  return (
+    <box paddingLeft={2} paddingRight={2} paddingBottom={1} gap={1}>
+      <Header title={`${t("People")} · ${props.name}`} onClose={props.onClose} />
+      <text fg={theme.text.muted} wrapMode="word">
+        {t(ROLE_HELP)}
+      </text>
+      <Show when={members.error ?? bans.error}>
+        {(error) => (
+          <text fg={theme.text.feedback.error.base} wrapMode="word">
+            {errorMessage(error())}
+          </text>
+        )}
+      </Show>
+      <Show when={listed().length > 0} fallback={<text fg={theme.text.muted}>{t("No guests have joined yet.")}</text>}>
+        <For each={listed()}>
+          {(member) => (
+            <box flexDirection="row" gap={1}>
+              <text fg={member.online ? theme.text.feedback.success.base : theme.text.muted} flexShrink={0}>
+                {member.online ? "●" : "○"}
+              </text>
+              <box flexGrow={1} minWidth={0}>
+                <text fg={theme.text.base} wrapMode="none" truncate>
+                  {member.name}
+                  <span style={{ fg: theme.text.muted }}>
+                    {` · ${member.online ? t("online") : t("away")}${member.address ? ` · ${member.address}` : ""}`}
+                  </span>
+                </text>
+              </box>
+              <Button onClick={() => cycle(member)}>{t(ROLE_LABEL[member.role])}</Button>
+              <Button
+                onLeave={() => setArmed()}
+                onClick={() =>
+                  confirm(`kick:${member.id}`, () =>
+                    client.api.room.member.remove({ roomID: props.roomID, guestID: member.id }),
+                  )
+                }
+              >
+                {armed() === `kick:${member.id}` ? t("Kick?") : t("Kick")}
+              </Button>
+              <Button
+                variant={armed() === `ban:${member.id}` ? "primary" : undefined}
+                onLeave={() => setArmed()}
+                onClick={() =>
+                  confirm(`ban:${member.id}`, () =>
+                    client.api.room.member.ban({ roomID: props.roomID, guestID: member.id }),
+                  )
+                }
+              >
+                {armed() === `ban:${member.id}` ? t("Ban?") : t("Ban")}
+              </Button>
+            </box>
+          )}
+        </For>
+      </Show>
+      <Show when={banned().length > 0}>
+        <Section title={t("Banned")} />
+        <For each={banned()}>
+          {(ban) => (
+            <box flexDirection="row" gap={1}>
+              <box flexGrow={1} minWidth={0}>
+                <text fg={theme.text.base} wrapMode="none" truncate>
+                  {ban.name}
+                  <span style={{ fg: theme.text.muted }}>{ban.address ? ` · ${ban.address}` : ""}</span>
+                </text>
+              </box>
+              <Button onClick={() => act(() => client.api.room.ban.remove({ roomID: props.roomID, banID: ban.id }))}>
+                {t("Unban")}
+              </Button>
+            </box>
+          )}
+        </For>
+      </Show>
+    </box>
+  )
+}
+
+// Windows Firewall drops room traffic for an app the user never allowed, and the
+// prompt that would ask never shows for the background service. The window reads which
+// of its rules exist and offers one elevated PowerShell run only when some are missing
+// or a block rule for this program is in the way.
+function FirewallHelp(props: { ports: readonly number[] }) {
+  const theme = useTheme().surface("dialog")
+  const toast = useToast()
+  const t = useT()
+  const [busy, setBusy] = createSignal(false)
+  const [state, { refetch }] = createResource(
+    () => (process.platform === "win32" ? [...props.ports] : undefined),
+    (ports) => readFirewall(ports),
+  )
+  const allow = () => {
+    setBusy(true)
+    void allowInWindowsFirewall(props.ports)
+      .then(() => readFirewall(props.ports))
+      .then((after) => {
+        void refetch()
+        // The elevated run reports nothing back, so what the firewall now holds is the answer.
+        if (firewallAllows(after)) return toast.show({ message: t("Windows Firewall rules added"), variant: "success" })
+        toast.show({
+          message: t("Windows Firewall still lacks the rules; was the administrator prompt declined?"),
+          variant: "error",
+        })
+      })
+      .catch((error: unknown) => toast.show({ message: errorMessage(error), variant: "error" }))
+      .finally(() => setBusy(false))
+  }
+  // A failed read leaves the button: offering it is harmless, hiding it could strand the operator.
+  const allowed = () => !state.error && state.state === "ready" && firewallAllows(state())
+  return (
+    <Show when={process.platform === "win32" && state.state !== "pending" && state.state !== "unresolved"}>
+      <Show
+        when={!allowed()}
+        fallback={<text fg={theme.text.muted}>{t("Windows Firewall lets opencode rooms through.")}</text>}
+      >
+        <box>
+          <text fg={theme.text.muted} wrapMode="word">
+            {t(
+              "Windows Firewall blocks rooms until opencode is allowed on the local network; Windows asks for administrator rights once.",
+            )}
+          </text>
+          <box flexDirection="row">
+            <Button disabled={busy()} onClick={allow}>
+              {t("Allow in Windows Firewall")}
+            </Button>
+          </box>
+        </box>
+      </Show>
+    </Show>
+  )
+}
+
+const RULE = "opencode rooms"
+
+// One rule per purpose, so allowing from Connect never drops the server port Host allowed.
+export function firewallRules(ports: readonly number[]) {
+  return [RULE, `${RULE} discovery`, ...ports.map((port) => `${RULE} tcp ${port}`)]
+}
+
+// The output of the read script: a "rule:<name>" line per rule present and "block" when a
+// block rule for this program exists, which wins over every allow rule.
+export function parseFirewall(output: string, ports: readonly number[]) {
+  const lines = output.split(/\r?\n/).map((line) => line.trim())
+  return {
+    missing: firewallRules(ports).filter((name) => !lines.includes(`rule:${name}`)),
+    blocked: lines.includes("block"),
+  }
+}
+
+export function firewallAllows(state: { missing: readonly string[]; blocked: boolean } | undefined) {
+  return state !== undefined && state.missing.length === 0 && !state.blocked
+}
+
+const program = () => `$program = '${process.execPath.replaceAll("'", "''")}'`
+const blockRules =
+  "Get-NetFirewallApplicationFilter -Program $program -ErrorAction SilentlyContinue | Get-NetFirewallRule | Where-Object { $_.Action -eq 'Block' -and $_.Enabled -eq 'True' }"
+
+// Reading rules needs no administrator rights.
+async function readFirewall(ports: readonly number[]) {
+  const script = [
+    program(),
+    ...firewallRules(ports).map(
+      (name) => `if (Get-NetFirewallRule -DisplayName '${name}' -ErrorAction SilentlyContinue) { 'rule:${name}' }`,
+    ),
+    `if (${blockRules}) { 'block' }`,
+  ].join("; ")
+  const child = Bun.spawn(["powershell", "-NoProfile", "-EncodedCommand", encode(script)], {
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const output = await new Response(child.stdout).text()
+  if ((await child.exited) !== 0)
+    throw new Error((await new Response(child.stderr).text()).trim() || "PowerShell failed")
+  return parseFirewall(output, ports)
+}
+
+async function allowInWindowsFirewall(ports: readonly number[]) {
+  const rule = `-Direction Inbound -Action Allow -RemoteAddress LocalSubnet -Profile Any`
+  const [app, discovery, ...tcp] = firewallRules(ports)
+  // Each rule is replaced by its own name only, so rules for other ports stay.
+  const replace = (name: string, filter: string) =>
+    `Remove-NetFirewallRule -DisplayName '${name}' -ErrorAction SilentlyContinue; New-NetFirewallRule -DisplayName '${name}' ${rule} ${filter}`
+  const script = [
+    program(),
+    // A dismissed firewall prompt leaves block rules for the program, and block rules win over allow rules.
+    `${blockRules} | Remove-NetFirewallRule`,
+    replace(app, "-Program $program"),
+    replace(discovery, `-Protocol UDP -LocalPort ${DISCOVERY_PORTS.join(",")}`),
+    ...tcp.map((name, index) => replace(name, `-Protocol TCP -LocalPort ${ports[index]}`)),
+  ].join("; ")
+  const child = Bun.spawn(
+    [
+      "powershell",
+      "-NoProfile",
+      "-Command",
+      `Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-EncodedCommand','${encode(script)}'`,
+    ],
+    { stdout: "ignore", stderr: "pipe" },
+  )
+  if ((await child.exited) !== 0)
+    throw new Error((await new Response(child.stderr).text()).trim() || "PowerShell failed")
+}
+
+// PowerShell takes an encoded command as base64 of UTF-16LE, which spares all quoting.
+function encode(script: string) {
+  return Buffer.from(script, "utf16le").toString("base64")
+}
+
+function Header(props: { title: string; onClose?: () => void }) {
+  const theme = useTheme().surface("dialog")
+  return (
+    <box flexDirection="row" justifyContent="space-between">
+      <text fg={theme.text.base} attributes={TextAttributes.BOLD}>
+        {props.title}
+      </text>
+      <text fg={theme.text.muted} onMouseUp={() => props.onClose?.()}>
+        esc
+      </text>
+    </box>
+  )
+}
+
+const LABEL_WIDTH = 14
+
+function Labeled(props: { label: string; children: JSX.Element }) {
+  const theme = useTheme().surface("dialog")
+  return (
+    <box flexDirection="row">
+      <box width={LABEL_WIDTH} flexShrink={0}>
+        <text fg={theme.text.muted}>{props.label}</text>
+      </box>
+      {props.children}
+    </box>
+  )
+}
+
+function Setting(props: { label: string; help: string; children: JSX.Element }) {
+  const theme = useTheme().surface("dialog")
+  return (
+    <box flexDirection="row">
+      <box width={LABEL_WIDTH} flexShrink={0}>
+        <text fg={theme.text.muted}>{props.label}</text>
+      </box>
+      <box flexShrink={1} minWidth={0}>
+        <box flexDirection="row">{props.children}</box>
+        <text fg={theme.text.muted} wrapMode="word">
+          {props.help}
+        </text>
+      </box>
+    </box>
+  )
+}
+
+function countdown(ms: number) {
+  const seconds = Math.floor(ms / 1000)
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
+}
+
+function Section(props: { title: string }) {
+  const theme = useTheme().surface("dialog")
+  return (
+    <text fg={theme.text.base} attributes={TextAttributes.UNDERLINE}>
+      {props.title}
+    </text>
+  )
+}

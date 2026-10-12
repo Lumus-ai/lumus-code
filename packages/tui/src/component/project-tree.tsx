@@ -1,0 +1,847 @@
+import { TextAttributes } from "@opentui/core"
+import { createEffect, createMemo, createResource, createSignal, For, on, onCleanup, onMount, Show } from "solid-js"
+import { createStore } from "solid-js/store"
+import type {
+  OrchestraAccess,
+  OrchestraProject,
+  RoomBan,
+  RoomInfo,
+  RoomMemberView,
+  SessionInfo,
+} from "@opencode/client/promise"
+import { Orchestra } from "@opencode/schema/orchestra"
+import { useClient } from "../context/client"
+import { useData } from "../context/data"
+import { useRoute } from "../context/route"
+import { useTheme } from "../context/theme"
+import { useDialog } from "../ui/dialog"
+import { useToast } from "../ui/toast"
+import { errorMessage } from "../util/error"
+import { roomListChanged, roomListRevision, sameRoom, useJoinedRooms, type JoinedRoom } from "../util/room"
+import { DialogConnect, DialogHost, nextRole, ROLE_LABEL } from "./dialog-rooms"
+import { roomClient, tellHostLeft, unlinkRoom } from "../util/room-guest"
+import { openProjectDialog } from "./dialog-project"
+import { useProjects } from "../context/projects"
+import { DialogPrompt } from "../ui/dialog-prompt"
+import { useNotes, type NotesTab } from "../context/notes"
+import { NotesPanel } from "./notes-panel"
+import { Row } from "./panel-row"
+import { RoomDodRows } from "./room-dod"
+import { useNow } from "./note-canvas"
+import { useT } from "../util/i18n"
+
+// The left panel: the operator's own projects, each a name and a directory,
+// with its main session (the orchestrator) and the sessions opened in that
+// directory under it, grouped by category. "#" sets a session's category; the
+// chip after it is the access the orchestrator has to it, and clicking it steps
+// through the levels. Below the projects, Multiplayer lists the sessions this
+// computer hosts as rooms and the rooms it joined on other hosts. The Notes tab
+// swaps the tree for the notes of one project.
+
+const ACCESS_ORDER: readonly OrchestraAccess[] = ["hidden", "read", "write", "full"]
+
+export function ProjectTree(props: { width: number }) {
+  const t = useT()
+  const client = useClient()
+  const data = useData()
+  const route = useRoute()
+  const theme = useTheme()
+  const toast = useToast()
+  const dialog = useDialog()
+  const projectList = useProjects()
+  const projects = projectList.list
+  const notes = useNotes()
+  const [rooms] = createResource(roomListRevision, () => client.api.room.list().catch(() => []))
+  const [joined, updateJoined] = useJoinedRooms()
+  const [expanded, setExpanded] = createStore<Record<string, boolean>>({})
+  const [access, setAccess] = createStore<Record<string, OrchestraAccess>>({})
+  const [category, setCategory] = createStore<Record<string, string | undefined>>({})
+  const [hover, setHover] = createSignal<string>()
+  // Deleting is permanent, so the first click only arms the button and the second deletes.
+  const [armed, setArmed] = createSignal<string>()
+  // Hidden as soon as the delete succeeds; the server's deleted event drops the record later.
+  const [removed, setRemoved] = createStore<Record<string, boolean>>({})
+
+  const current = () => (route.data.type === "session" ? data.session.get(route.data.sessionID) : undefined)
+  // A narrow panel keeps session titles readable by showing the category and access controls
+  // only on the hovered session.
+  const narrow = () => props.width < 36
+  const shared = createMemo(() => new Set((rooms.latest ?? []).map((room) => room.sessionID)))
+  const owner = (session: Pick<SessionInfo, "id" | "location" | "metadata">) =>
+    Orchestra.ownerOf(
+      projects(),
+      session.location.directory,
+      projectList.owner(session.id) ?? Orchestra.sessionOwner(session.metadata),
+    )
+
+  const sessionProject = () => {
+    const session = current()
+    return session && projects().find((item) => item.main === session.id || owner(session)?.id === item.id)
+  }
+
+  // The project of the open session starts expanded so the tree shows where you are.
+  createEffect(() => {
+    const project = sessionProject()
+    if (project && expanded[project.id] === undefined) void expand(project.id)
+  })
+
+  // Opening a session makes its project the one the Notes tab shows.
+  createEffect(
+    on(
+      () => sessionProject()?.id,
+      (projectID) => {
+        if (projectID && projectID !== notes.project()) notes.setProject(projectID)
+      },
+    ),
+  )
+
+  const expand = async (projectID: string) => {
+    setExpanded(projectID, true)
+    await client.api.orchestra.project
+      .sessions({ projectID })
+      .then((result) => {
+        result.data.forEach((session) => data.session.remember(session))
+        setAccess(result.access)
+        setCategory(result.category)
+      })
+      .catch((error: unknown) => toast.show({ message: errorMessage(error), variant: "error" }))
+  }
+
+  const toggle = (projectID: string) => {
+    notes.setProject(projectID)
+    if (expanded[projectID]) return setExpanded(projectID, false)
+    void expand(projectID)
+  }
+
+  const edit = (project?: OrchestraProject) => openProjectDialog(dialog, projectList.refetch, project)
+
+  const openMain = (project: OrchestraProject) =>
+    client.api.orchestra.project
+      .main({ projectID: project.id })
+      .then((session) => {
+        data.session.remember(session)
+        projectList.mutate((list) =>
+          list?.map((item) => (item.id === project.id ? { ...item, main: session.id } : item)),
+        )
+        route.navigate({ type: "session", sessionID: session.id })
+      })
+      .catch((error: unknown) => toast.show({ message: errorMessage(error), variant: "error" }))
+
+  const cycle = (sessionID: string) => {
+    const now = access[sessionID] ?? Orchestra.defaultAccess
+    const next = ACCESS_ORDER[(ACCESS_ORDER.indexOf(now) + 1) % ACCESS_ORDER.length]
+    setAccess(sessionID, next)
+    void client.api.orchestra.access({ sessionID, access: next }).catch((error: unknown) => {
+      setAccess(sessionID, now)
+      toast.show({ message: errorMessage(error), variant: "error" })
+    })
+  }
+
+  const categorize = (sessionID: string) =>
+    dialog.replace(() => (
+      <DialogPrompt
+        title={t("Session category")}
+        placeholder={t("Planning, Build, Quality… (empty removes it)")}
+        value={category[sessionID] ?? ""}
+        onCancel={() => dialog.clear()}
+        onConfirm={(value) => {
+          dialog.clear()
+          const previous = category[sessionID]
+          setCategory(sessionID, value.trim() || undefined)
+          void client.api.orchestra.category({ sessionID, category: value.trim() }).catch((error: unknown) => {
+            setCategory(sessionID, previous)
+            toast.show({ message: errorMessage(error), variant: "error" })
+          })
+        }}
+      />
+    ))
+
+  const remove = (sessionID: string) => {
+    if (armed() !== sessionID) return setArmed(sessionID)
+    setArmed()
+    void client.api.session
+      .remove({ sessionID })
+      .then(() => {
+        setRemoved(sessionID, true)
+        data.session.evict(sessionID)
+        if (route.data.type === "session" && route.data.sessionID === sessionID) route.navigate({ type: "home" })
+      })
+      .catch((error: unknown) => toast.show({ message: errorMessage(error), variant: "error" }))
+  }
+
+  const roomKey = (room: JoinedRoom) => `room:${room.url}#${room.roomID}`
+  const openRoom = (room: JoinedRoom, sessionID?: string) =>
+    route.navigate({ type: "room", url: room.url, roomID: room.roomID, sessionID })
+  const viewing = (room: JoinedRoom) => route.data.type === "room" && sameRoom(route.data, room)
+
+  // Leaving tells the host and forgets the token here; the host keeps the room and its chat.
+  const leave = (room: JoinedRoom) => {
+    if (armed() !== roomKey(room)) return setArmed(roomKey(room))
+    setArmed()
+    if (viewing(room)) route.navigate({ type: "home" })
+    void tellHostLeft(room)
+    void unlinkRoom(client.api, room)
+    void updateJoined((draft) => {
+      draft.joined = draft.joined.filter((item) => !sameRoom(item, room))
+    })
+  }
+
+  // Closing a room stops sharing its session: the session stays, every guest token stops working.
+  const stopHosting = (roomID: string) => {
+    if (armed() !== `hosted:${roomID}`) return setArmed(`hosted:${roomID}`)
+    setArmed()
+    void client.api.room
+      .remove({ roomID })
+      .then(() => roomListChanged())
+      .catch((error: unknown) => toast.show({ message: errorMessage(error), variant: "error" }))
+  }
+
+  const openRooms = (window: typeof DialogHost) => {
+    dialog.replace(() => window({ onClose: () => dialog.clear() }), undefined, { size: "large" })
+    dialog.setCentered(true)
+  }
+
+  const sessionsOf = (project: OrchestraProject) =>
+    data.session
+      .list()
+      .filter(
+        (session) =>
+          !session.parentID && !removed[session.id] && session.id !== project.main && owner(session)?.id === project.id,
+      )
+
+  // Categories in first-seen order; sessions without one come last, under "Other"
+  // only when the project uses categories at all.
+  const groupsOf = (project: OrchestraProject) => {
+    const sessions = sessionsOf(project)
+    const names = [...new Set(sessions.flatMap((session) => category[session.id] ?? []))]
+    const rest = sessions.filter((session) => !category[session.id])
+    return [
+      ...names.map((name) => ({ name, sessions: sessions.filter((session) => category[session.id] === name) })),
+      ...(rest.length > 0 ? [{ name: names.length > 0 ? t("Other") : "", sessions: rest }] : []),
+    ]
+  }
+
+  return (
+    <box width={props.width} height="100%" flexShrink={0} backgroundColor={theme.background.raised.base} paddingTop={1}>
+      <box flexDirection="row" paddingLeft={1} paddingRight={1} paddingBottom={1}>
+        <Tab tab="projects" label={t("Projects")} hover={hover} setHover={setHover} />
+        <text fg={theme.text.muted}>│</text>
+        <Tab tab="notes" label={t("Notes")} hover={hover} setHover={setHover} />
+        <box flexGrow={1} />
+        <Row
+          id="new"
+          hover={hover}
+          setHover={setHover}
+          onClick={() => (notes.tab() === "notes" ? notes.setCreating(true) : edit())}
+        >
+          <text fg={hover() === "new" ? theme.text.action.primary.hovered : theme.text.action.primary.base}>
+            {t("+ New")}
+          </text>
+        </Row>
+      </box>
+      <Show when={notes.tab() === "notes"}>
+        <ProjectNotes />
+      </Show>
+      <scrollbox
+        visible={notes.tab() === "projects"}
+        flexGrow={notes.tab() === "projects" ? 1 : 0}
+        minHeight={0}
+        horizontalScrollbarOptions={{ visible: false }}
+      >
+        <For each={projects()}>
+          {(project) => (
+            <box>
+              <Row id={project.id} hover={hover} setHover={setHover} onClick={() => toggle(project.id)}>
+                <text flexShrink={0} fg={theme.text.muted}>
+                  {expanded[project.id] ? "▾ " : "▸ "}
+                </text>
+                <box flexGrow={1} minWidth={0}>
+                  <text fg={theme.text.base} attributes={TextAttributes.BOLD} wrapMode="none" truncate>
+                    {project.name}
+                  </text>
+                </box>
+                <box
+                  flexShrink={0}
+                  onMouseUp={(event) => {
+                    event.stopPropagation()
+                    edit(project)
+                  }}
+                >
+                  <text fg={hover() === project.id ? theme.text.action.primary.base : theme.text.muted}> ⚙</text>
+                </box>
+              </Row>
+              <Show when={expanded[project.id]}>
+                <Row
+                  id={`${project.id}:main`}
+                  hover={hover}
+                  setHover={setHover}
+                  selected={project.main !== undefined && project.main === current()?.id}
+                  onClick={() => void openMain(project)}
+                >
+                  <text flexShrink={0} fg={theme.text.action.primary.base}>
+                    {"  ★ "}
+                  </text>
+                  <text fg={theme.text.base} wrapMode="none" truncate>
+                    {t("Orchestrator")}
+                  </text>
+                </Row>
+                <For each={groupsOf(project)}>
+                  {(group) => (
+                    <>
+                      <Show when={group.name}>
+                        <box paddingLeft={4}>
+                          <text fg={theme.text.muted} attributes={TextAttributes.BOLD} wrapMode="none" truncate>
+                            {group.name}
+                          </text>
+                        </box>
+                      </Show>
+                      <For each={group.sessions}>
+                        {(session) => (
+                          <Row
+                            id={session.id}
+                            hover={hover}
+                            setHover={setHover}
+                            selected={session.id === current()?.id}
+                            onClick={() => route.navigate({ type: "session", sessionID: session.id })}
+                          >
+                            <text
+                              flexShrink={0}
+                              fg={
+                                data.session.status(session.id) === "running"
+                                  ? theme.text.feedback.success.base
+                                  : theme.text.muted
+                              }
+                            >
+                              {data.session.status(session.id) === "running" ? "  ● " : "  ○ "}
+                            </text>
+                            <box flexGrow={1} minWidth={0}>
+                              <text fg={theme.text.base} wrapMode="none" truncate>
+                                {`${shared().has(session.id) ? "⇄ " : ""}${session.title || t("Untitled")}`}
+                              </text>
+                            </box>
+                            <Show when={!narrow() || hover() === session.id}>
+                              <box
+                                flexShrink={0}
+                                onMouseUp={(event) => {
+                                  event.stopPropagation()
+                                  categorize(session.id)
+                                }}
+                              >
+                                <text fg={hover() === session.id ? theme.text.action.primary.base : theme.text.muted}>
+                                  {" # "}
+                                </text>
+                              </box>
+                              <box
+                                flexShrink={0}
+                                onMouseUp={(event) => {
+                                  event.stopPropagation()
+                                  cycle(session.id)
+                                }}
+                              >
+                                <text
+                                  fg={theme.text.formfield.base}
+                                >{`[${access[session.id] ?? Orchestra.defaultAccess}]`}</text>
+                              </box>
+                            </Show>
+                            <box
+                              flexShrink={0}
+                              onMouseOut={() => setArmed()}
+                              onMouseUp={(event) => {
+                                event.stopPropagation()
+                                remove(session.id)
+                              }}
+                            >
+                              <text fg={armed() === session.id ? theme.text.feedback.error.base : theme.text.muted}>
+                                {armed() === session.id ? ` ${t("delete?")}` : " ×"}
+                              </text>
+                            </box>
+                          </Row>
+                        )}
+                      </For>
+                    </>
+                  )}
+                </For>
+                <Row
+                  id={`${project.id}:new`}
+                  hover={hover}
+                  setHover={setHover}
+                  onClick={() =>
+                    route.navigate({ type: "home", location: { directory: project.directory }, project: project.id })
+                  }
+                >
+                  <text fg={theme.text.muted}>{"  " + t("+ New session")}</text>
+                </Row>
+              </Show>
+            </box>
+          )}
+        </For>
+        <box paddingTop={projects().length > 0 ? 1 : 0}>
+          <box flexDirection="row" paddingLeft={1} paddingRight={1}>
+            <text flexShrink={0} fg={theme.text.action.secondary.base} attributes={TextAttributes.BOLD}>
+              {"⇄ "}
+            </text>
+            <box flexGrow={1} minWidth={0}>
+              <text fg={theme.text.base} attributes={TextAttributes.BOLD} wrapMode="none" truncate>
+                {t("Multiplayer")}
+              </text>
+            </box>
+            <Show when={!narrow()}>
+              <MultiplayerActions hover={hover} setHover={setHover} onOpen={openRooms} />
+            </Show>
+          </box>
+          {/* A narrow panel has no room beside the heading, so Host and Connect go under it. */}
+          <Show when={narrow()}>
+            <box flexDirection="row" paddingLeft={3} paddingRight={1}>
+              <MultiplayerActions hover={hover} setHover={setHover} onOpen={openRooms} />
+            </box>
+          </Show>
+          <RoomPeople rooms={rooms.latest ?? []} hover={hover} setHover={setHover} />
+          <For each={rooms.latest ?? []}>
+            {(room) => (
+              <>
+                <Row
+                  id={`hosted:${room.id}`}
+                  hover={hover}
+                  setHover={setHover}
+                  selected={room.sessionID === current()?.id}
+                  onClick={() => route.navigate({ type: "session", sessionID: room.sessionID })}
+                >
+                  <text flexShrink={0} fg={theme.text.action.secondary.base}>
+                    {"  ⇄ "}
+                  </text>
+                  <box flexGrow={1} minWidth={0}>
+                    <text fg={theme.text.base} wrapMode="none" truncate>
+                      {room.name}
+                    </text>
+                  </box>
+                  <box
+                    flexShrink={0}
+                    onMouseOut={() => setArmed()}
+                    onMouseUp={(event) => {
+                      event.stopPropagation()
+                      stopHosting(room.id)
+                    }}
+                  >
+                    <text
+                      fg={
+                        armed() === `hosted:${room.id}`
+                          ? theme.text.action.destructive.focused
+                          : theme.text.action.destructive.base
+                      }
+                    >
+                      {armed() === `hosted:${room.id}` ? ` ${t("close?")}` : " ×"}
+                    </text>
+                  </box>
+                </Row>
+                <RoomDodRows
+                  id={`hosted:${room.id}`}
+                  hover={hover}
+                  setHover={setHover}
+                  load={() => client.api.room.dod.get({ roomID: room.id })}
+                  release={(id) => client.api.room.dod.release({ roomID: room.id, id })}
+                  feed={(after, wait) => client.api.room.feed({ roomID: room.id, after, wait })}
+                />
+              </>
+            )}
+          </For>
+          <For each={joined.joined}>
+            {(room) => (
+              <>
+                <Row
+                  id={roomKey(room)}
+                  hover={hover}
+                  setHover={setHover}
+                  selected={viewing(room) && route.data.type === "room" && !route.data.sessionID}
+                  onClick={() => openRoom(room)}
+                >
+                  <text flexShrink={0} fg={theme.text.action.secondary.base}>
+                    {"  ⇄ "}
+                  </text>
+                  <box flexGrow={1} minWidth={0}>
+                    <text fg={theme.text.base} wrapMode="none" truncate>
+                      {room.name}
+                      <span style={{ fg: theme.text.muted }}>{` · ${new URL(room.url).host}`}</span>
+                    </text>
+                  </box>
+                  <box
+                    flexShrink={0}
+                    onMouseOut={() => setArmed()}
+                    onMouseUp={(event) => {
+                      event.stopPropagation()
+                      leave(room)
+                    }}
+                  >
+                    <text
+                      fg={
+                        armed() === roomKey(room)
+                          ? theme.text.action.destructive.focused
+                          : theme.text.action.destructive.base
+                      }
+                    >
+                      {armed() === roomKey(room) ? ` ${t("leave?")}` : " ×"}
+                    </text>
+                  </box>
+                </Row>
+                <RoomDodRows
+                  id={roomKey(room)}
+                  hover={hover}
+                  setHover={setHover}
+                  load={() => roomClient(room).room.guest.dod.get({ roomID: room.roomID })}
+                  take={(id) =>
+                    roomClient(room).room.guest.dod.claim(
+                      id ? { roomID: room.roomID, id, take: true } : { roomID: room.roomID, next: true, take: true },
+                    )
+                  }
+                  submit={(id) => roomClient(room).room.guest.dod.submit({ roomID: room.roomID, id })}
+                  release={(id) => roomClient(room).room.guest.dod.claim({ roomID: room.roomID, id, take: false })}
+                  feed={(after, wait) => roomClient(room).room.guest.feed({ roomID: room.roomID, after, wait })}
+                />
+                <RoomSessions
+                  room={room}
+                  hover={hover}
+                  setHover={setHover}
+                  current={route.data.type === "room" && sameRoom(route.data, room) ? route.data.sessionID : undefined}
+                  onOpen={(sessionID) => openRoom(room, sessionID)}
+                />
+              </>
+            )}
+          </For>
+          <Show when={(rooms.latest ?? []).length === 0 && joined.joined.length === 0}>
+            <box paddingLeft={4} paddingRight={1}>
+              <text fg={theme.text.muted} wrapMode="word">
+                {t("No rooms yet. Host a session or connect to someone else's.")}
+              </text>
+            </box>
+          </Show>
+        </box>
+      </scrollbox>
+    </box>
+  )
+}
+
+function MultiplayerActions(props: {
+  hover: () => string | undefined
+  setHover: (id: string | undefined) => void
+  onOpen: (window: typeof DialogHost) => void
+}) {
+  const theme = useTheme()
+  const t = useT()
+  return (
+    <For
+      each={[
+        { id: "multiplayer:host", label: t("+ Host"), window: DialogHost },
+        { id: "multiplayer:connect", label: t("+ Connect"), window: DialogConnect },
+      ]}
+    >
+      {(action) => (
+        <box
+          flexShrink={0}
+          paddingLeft={1}
+          onMouseOver={() => props.setHover(action.id)}
+          onMouseOut={() => props.setHover(undefined)}
+          onMouseUp={() => props.onOpen(action.window)}
+        >
+          <text fg={props.hover() === action.id ? theme.text.action.primary.hovered : theme.text.action.primary.base}>
+            {action.label}
+          </text>
+        </box>
+      )}
+    </For>
+  )
+}
+
+function Tab(props: {
+  tab: NotesTab
+  label: string
+  hover: () => string | undefined
+  setHover: (id: string | undefined) => void
+}) {
+  const theme = useTheme()
+  const notes = useNotes()
+  const id = `tab:${props.tab}`
+  const active = () => notes.tab() === props.tab
+  return (
+    <box
+      paddingLeft={1}
+      paddingRight={1}
+      onMouseOver={() => props.setHover(id)}
+      onMouseOut={() => props.setHover(undefined)}
+      onMouseUp={() => notes.setTab(props.tab)}
+    >
+      <text
+        fg={
+          active()
+            ? theme.text.action.primary.selected
+            : props.hover() === id
+              ? theme.text.action.secondary.hovered
+              : theme.text.muted
+        }
+        attributes={active() ? TextAttributes.BOLD | TextAttributes.UNDERLINE : undefined}
+      >
+        {props.label}
+      </text>
+    </box>
+  )
+}
+
+// The Notes tab: the notes of the project of the open session, or of the project
+// last picked, or of the first one.
+function ProjectNotes() {
+  const notes = useNotes()
+  const route = useRoute()
+  const toast = useToast()
+  const projects = useProjects().list
+  const now = useNow()
+  const project = createMemo(() => projects().find((item) => item.id === notes.project()) ?? projects()[0])
+  const directory = () => project()?.directory
+  const openName = () => (route.data.type === "session" ? notes.bound(route.data.sessionID)?.name : undefined)
+  const fail = (error: unknown) => toast.show({ variant: "error", message: errorMessage(error) })
+
+  return (
+    <NotesPanel
+      project={project()}
+      projects={projects()}
+      notes={directory() ? notes.list(directory()!) : []}
+      loaded={directory() ? notes.loaded(directory()!) : true}
+      error={directory() ? notes.error(directory()!) : undefined}
+      openName={openName()}
+      now={now()}
+      creating={notes.creating()}
+      onCreating={notes.setCreating}
+      onPickProject={notes.setProject}
+      onOpen={(note) => {
+        const target = directory()
+        if (target) void notes.open(target, note).catch(fail)
+      }}
+      onCreate={(title) => {
+        const target = directory()
+        if (target) void notes.start(target, title).catch(fail)
+      }}
+      onRemove={(note) => {
+        const target = directory()
+        if (!target) return
+        void notes.remove(target, note).catch(fail)
+      }}
+    />
+  )
+}
+
+// The sessions of a joined project room, under the room in the left panel, with a row to
+// start another. A room sharing one session lists nothing here; the room row opens it.
+function RoomSessions(props: {
+  room: JoinedRoom
+  hover: () => string | undefined
+  setHover: (id: string | undefined) => void
+  current?: string
+  onOpen: (sessionID: string) => void
+}) {
+  const theme = useTheme()
+  const toast = useToast()
+  const t = useT()
+  const remote = roomClient(props.room)
+  const roomID = props.room.roomID
+  const [sessions, setSessions] = createSignal<readonly SessionInfo[]>([])
+  const [project, setProject] = createSignal(false)
+  // A gone host or a removed guest just lists nothing; the room view says why.
+  const load = () =>
+    void Promise.all([remote.room.guest.get({ roomID }), remote.room.guest.session.list({ roomID })])
+      .then(([joined, list]) => {
+        setProject(joined.room.directory !== undefined)
+        setSessions(list)
+      })
+      .catch(() => setSessions([]))
+  onMount(() => {
+    load()
+    const timer = setInterval(load, 5000)
+    onCleanup(() => clearInterval(timer))
+  })
+  const start = () =>
+    void remote.room.guest.session
+      .create({ roomID })
+      .then((created) => {
+        setSessions((list) => [created, ...list])
+        props.onOpen(created.id)
+      })
+      .catch((error: unknown) => toast.show({ message: errorMessage(error), variant: "error" }))
+  const key = (id: string) => `room:${props.room.url}#${roomID}:${id}`
+  return (
+    <Show when={project()}>
+      <For each={sessions()}>
+        {(session) => (
+          <Row
+            id={key(session.id)}
+            hover={props.hover}
+            setHover={props.setHover}
+            selected={props.current === session.id}
+            onClick={() => props.onOpen(session.id)}
+          >
+            <text flexShrink={0} fg={theme.text.muted}>
+              {"      ○ "}
+            </text>
+            <box flexGrow={1} minWidth={0}>
+              <text fg={theme.text.base} wrapMode="none" truncate>
+                {session.title || t("Untitled")}
+              </text>
+            </box>
+          </Row>
+        )}
+      </For>
+      <Row id={key("new")} hover={props.hover} setHover={props.setHover} onClick={start}>
+        <text fg={theme.text.muted}>{"      " + t("+ New session")}</text>
+      </Row>
+    </Show>
+  )
+}
+
+// Who is in the rooms this computer hosts, right under the Multiplayer heading: whether
+// each guest is connected, the role a click steps through, and removing or banning
+// after a second click. Banned guests follow, each with a way back in.
+function RoomPeople(props: {
+  rooms: readonly RoomInfo[]
+  hover: () => string | undefined
+  setHover: (id: string | undefined) => void
+}) {
+  const client = useClient()
+  const theme = useTheme()
+  const toast = useToast()
+  const t = useT()
+  const [open, setOpen] = createSignal(true)
+  const [members, setMembers] = createSignal<Record<string, readonly RoomMemberView[]>>({})
+  const [bans, setBans] = createSignal<Record<string, readonly RoomBan[]>>({})
+  const [armed, setArmed] = createSignal<string>()
+  // Guests report in every couple of seconds; reading as often keeps "online" honest.
+  const read = () =>
+    Promise.all(
+      props.rooms.map((room) =>
+        Promise.all([
+          client.api.room.member.list({ roomID: room.id }).catch(() => []),
+          client.api.room.ban.list({ roomID: room.id }).catch(() => []),
+        ]).then(([listed, banned]) => ({ id: room.id, listed, banned })),
+      ),
+    ).then((list) => {
+      setMembers(Object.fromEntries(list.map((item) => [item.id, item.listed])))
+      setBans(Object.fromEntries(list.map((item) => [item.id, item.banned])))
+    })
+  createEffect(
+    on(
+      () => props.rooms,
+      () => void read(),
+    ),
+  )
+  onMount(() => {
+    const timer = setInterval(() => void read(), 3000)
+    onCleanup(() => clearInterval(timer))
+  })
+
+  const people = () => props.rooms.flatMap((room) => (members()[room.id] ?? []).map((member) => ({ room, member })))
+  const banned = () => props.rooms.flatMap((room) => (bans()[room.id] ?? []).map((ban) => ({ room, ban })))
+  const named = (name: string, room: RoomInfo) => (props.rooms.length > 1 ? `${name} · ${room.name}` : name)
+
+  const act = (action: () => Promise<unknown>) =>
+    void action()
+      .then(read)
+      .catch((error: unknown) => toast.show({ message: errorMessage(error), variant: "error" }))
+  const confirm = (key: string, action: () => Promise<unknown>) => {
+    if (armed() !== key) return setArmed(key)
+    setArmed()
+    act(action)
+  }
+  const cycle = (room: RoomInfo, member: RoomMemberView) => {
+    const role = nextRole(member.role)
+    setMembers((all) => ({
+      ...all,
+      [room.id]: (all[room.id] ?? []).map((item) => (item.id === member.id ? { ...item, role } : item)),
+    }))
+    act(() => client.api.room.member.update({ roomID: room.id, guestID: member.id, role }))
+  }
+  const destructive = (key: string) =>
+    armed() === key ? theme.text.action.destructive.focused : theme.text.action.destructive.base
+
+  return (
+    <Show when={props.rooms.length > 0}>
+      <Row id="people" hover={props.hover} setHover={props.setHover} onClick={() => setOpen(!open())}>
+        <text fg={theme.text.muted}>{open() ? "  ▾ " : "  ▸ "}</text>
+        <box flexGrow={1} minWidth={0}>
+          <text fg={theme.text.base} wrapMode="none" truncate>
+            {t("Participants")}
+          </text>
+        </box>
+        <text fg={theme.text.muted}>
+          {t("{online}/{total} online", {
+            online: people().filter((item) => item.member.online).length,
+            total: people().length,
+          })}
+        </text>
+      </Row>
+      <Show when={open()}>
+        <Show
+          when={people().length > 0}
+          fallback={
+            <box paddingLeft={6} paddingRight={1}>
+              <text fg={theme.text.muted}>{t("No guests have joined yet.")}</text>
+            </box>
+          }
+        >
+          <For each={people()}>
+            {(item) => (
+              <box flexDirection="row" paddingLeft={5} paddingRight={1}>
+                <text fg={item.member.online ? theme.text.feedback.success.base : theme.text.muted}>
+                  {item.member.online ? "● " : "○ "}
+                </text>
+                <box flexGrow={1} minWidth={0}>
+                  <text fg={theme.text.base} wrapMode="none" truncate>
+                    {named(item.member.name, item.room)}
+                  </text>
+                </box>
+                <box onMouseUp={() => cycle(item.room, item.member)}>
+                  <text fg={theme.text.formfield.base}>{` [${t(ROLE_LABEL[item.member.role])}]`}</text>
+                </box>
+                <box
+                  onMouseOut={() => setArmed()}
+                  onMouseUp={() =>
+                    confirm(`kick:${item.member.id}`, () =>
+                      client.api.room.member.remove({ roomID: item.room.id, guestID: item.member.id }),
+                    )
+                  }
+                >
+                  <text fg={destructive(`kick:${item.member.id}`)}>
+                    {armed() === `kick:${item.member.id}` ? ` ${t("Kick?")}` : " ×"}
+                  </text>
+                </box>
+                <box
+                  onMouseOut={() => setArmed()}
+                  onMouseUp={() =>
+                    confirm(`ban:${item.member.id}`, () =>
+                      client.api.room.member.ban({ roomID: item.room.id, guestID: item.member.id }),
+                    )
+                  }
+                >
+                  <text fg={destructive(`ban:${item.member.id}`)}>
+                    {armed() === `ban:${item.member.id}` ? ` ${t("Ban?")}` : ` ${t("ban")}`}
+                  </text>
+                </box>
+              </box>
+            )}
+          </For>
+        </Show>
+        <For each={banned()}>
+          {(item) => (
+            <box flexDirection="row" paddingLeft={5} paddingRight={1}>
+              <text fg={theme.text.action.destructive.base}>{"⊘ "}</text>
+              <box flexGrow={1} minWidth={0}>
+                <text fg={theme.text.muted} wrapMode="none" truncate>
+                  {named(item.ban.name, item.room)}
+                </text>
+              </box>
+              <box
+                onMouseUp={() => act(() => client.api.room.ban.remove({ roomID: item.room.id, banID: item.ban.id }))}
+              >
+                <text fg={theme.text.action.primary.base}>{` ${t("unban")}`}</text>
+              </box>
+            </box>
+          )}
+        </For>
+      </Show>
+    </Show>
+  )
+}
