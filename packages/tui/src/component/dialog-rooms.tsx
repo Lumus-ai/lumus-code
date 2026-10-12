@@ -18,11 +18,15 @@ import { errorMessage } from "../util/error"
 import { useT } from "../util/i18n"
 import { roomListChanged, sameRoom, useDeviceKey, useJoinedRooms, type JoinedRoom } from "../util/room"
 import { Button } from "./devtools-registry"
+import { start as startTunnel, type Tunnel } from "../util/tunnel"
 import { roomClient, tellHostLeft, unlinkRoom } from "../util/room-guest"
 import { DISCOVERY_PORTS, readServer, scanRooms, type FoundRoom } from "@opencode/client/room-discovery"
 
 // Host: the rooms this computer shares. A room is one session other devices
 // join with a short code; only this computer's AI answers in it.
+// The online link outlives the dialog: it stays up until stopped or Lumus Code exits.
+let onlineLink: Tunnel | undefined
+
 export function DialogHost(props: { onClose?: () => void }) {
   const dialog = useDialog()
   const client = useClient()
@@ -59,6 +63,30 @@ export function DialogHost(props: { onClose?: () => void }) {
   const virtual = (host: string) => /^(169\.254\.|172\.(1[6-9]|2\d|3[01])\.|198\.1[89]\.)/.test(host)
   const preferred = () => listening().filter((host) => !virtual(host))
   const addresses = () => (preferred().length > 0 ? preferred() : listening())
+
+  const [link, setLink] = createSignal<string | undefined>(onlineLink?.url)
+  const toggleLink = async () => {
+    if (onlineLink) {
+      onlineLink.stop()
+      onlineLink = undefined
+      setLink(undefined)
+      return
+    }
+    const urls = server.state === "ready" ? server().urls : []
+    const port = Number(urls.map((url) => new URL(url).port).find(Boolean))
+    if (!port) {
+      toast.show({ message: t("Could not read the server port"), variant: "error" })
+      return
+    }
+    setBusy(true)
+    await startTunnel(port)
+      .then((tunnel) => {
+        onlineLink = tunnel
+        setLink(tunnel.url)
+      })
+      .catch((error: unknown) => toast.show({ message: errorMessage(error), variant: "error" }))
+    setBusy(false)
+  }
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true)
@@ -262,6 +290,31 @@ export function DialogHost(props: { onClose?: () => void }) {
                 {t(ROLE_LABEL[joinRole(room)])}
               </Button>
             </Setting>
+            <Setting
+              label={t("Online link")}
+              help={t(
+                "Makes this server reachable from the internet through a Cloudflare tunnel (needs cloudflared). Anyone with the link still needs the join code. Share the link and the code only with people you trust. Stops when you press Stop or exit.",
+              )}
+            >
+              <Show
+                when={!room.open}
+                fallback={<text fg={theme.text.feedback.warning.base}>{t("Set Entry to With a code first")}</text>}
+              >
+                <Button disabled={busy()} onClick={() => void toggleLink()}>
+                  {link() ? t("Stop online link") : t("Start online link")}
+                </Button>
+              </Show>
+            </Setting>
+            <Show when={link() && !room.open}>
+              <Labeled label={t("Online address")}>
+                <text fg={theme.text.base} selectable>
+                  {link()}
+                </text>
+              </Labeled>
+              <text fg={theme.text.feedback.warning.base} wrapMode="word">
+                {t("Anyone who gets this link and a join code can enter the room. Do not post them publicly.")}
+              </text>
+            </Show>
             <Setting
               label={t("Trust Instinct (external)")}
               help={t(

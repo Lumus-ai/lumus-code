@@ -11,6 +11,16 @@ const ru: Record<string, string> = {
     "Выполнять промпты внешнего агента без вопроса. По умолчанию выключено; команды и правки файлов всё равно спрашивают. Выключается при новом коде входа.",
   "Prompts run without asking": "Промпты без вопроса",
   "Ask for each prompt": "Спрашивать каждый промпт",
+  "Online link": "Ссылка из интернета",
+  "Start online link": "Включить ссылку",
+  "Stop online link": "Выключить ссылку",
+  "Online address": "Адрес из интернета",
+  "Could not read the server port": "Не удалось определить порт сервера",
+  "Set Entry to With a code first": "Сначала поставь вход «С кодом»",
+  "Anyone who gets this link and a join code can enter the room. Do not post them publicly.":
+    "Любой, у кого есть эта ссылка и код входа, попадёт в комнату. Не публикуй их.",
+  "Makes this server reachable from the internet through a Cloudflare tunnel (needs cloudflared). Anyone with the link still needs the join code. Share the link and the code only with people you trust. Stops when you press Stop or exit.":
+    "Открывает сервер из интернета через туннель Cloudflare (нужен cloudflared). Ссылка без кода не пускает. Давай ссылку и код только тем, кому доверяешь. Останавливается кнопкой или при выходе.",
   // Bar
   Server: "Сервер",
   UI: "Интерфейс",
