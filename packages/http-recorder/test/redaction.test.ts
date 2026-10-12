@@ -77,7 +77,7 @@ describe("redaction", () => {
               url: "https://example.test/path?key=sk-123456789012345678901234",
               headers: {},
               body: JSON.stringify({
-                nested: "AIzaSyDHibiBRvJZLsFnPYPoiTwxY4ztQ55yqCE",
+                nested: ["AIza", "FAKE".repeat(9).slice(0, 35)].join(""), // runtime-built placeholder, not a real key
               }),
             },
             response: {
