@@ -60,6 +60,9 @@ function chatMessage(message: SessionMessage.Info): Room.Message[] {
   if (message.type === "synthetic") {
     // An outside agent's answer or tool result: shown as an assistant line labeled external.
     const room = message.metadata?.room
+    // A host line addressed to the external agent: shown as the host's message, no model run.
+    if (Predicate.isObject(room) && room.addressed === "instinct")
+      return [{ id: message.id, role: "user" as const, author: "host", text: message.text, created }]
     if (!Predicate.isObject(room) || room.external !== true || !Predicate.isObject(room.guest)) return []
     const author = typeof room.guest.name === "string" ? room.guest.name : External.label("external")
     return [{ id: message.id, role: "assistant" as const, author, text: message.text, created, external: true }]
@@ -470,6 +473,16 @@ export const RoomHandler = HttpApiBuilder.group(Api, "server.room", (handlers) =
           const waiting = (yield* sessions.inbox(session.id).pipe(Effect.orElseSucceed(() => []))).flatMap((item) => {
             if (item.type !== "synthetic" || seen.has(item.id)) return []
             const room = item.payload.metadata?.room
+            if (Predicate.isObject(room) && room.addressed === "instinct")
+              return [
+                {
+                  id: item.id,
+                  role: "user" as const,
+                  author: "host",
+                  text: item.payload.text,
+                  created: DateTime.toEpochMillis(item.time.created),
+                },
+              ]
             if (!Predicate.isObject(room) || room.external !== true || !Predicate.isObject(room.guest)) return []
             const author = typeof room.guest.name === "string" ? room.guest.name : External.label("external")
             return [

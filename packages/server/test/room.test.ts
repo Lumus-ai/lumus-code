@@ -841,6 +841,26 @@ it.live("an external agent posts labeled, message-only answers and is refused ev
   }).pipe(Effect.scoped),
 )
 
+it.live("a host line addressed to @instinct shows in the guest chat as the host's, without a model run", () =>
+  Effect.gen(function* () {
+    const { call, room, code, session } = yield* setup
+    const joined = (yield* call("/api/room/join", { method: "POST", body: { code, name: "Instinct", external: true } })).body
+    const ext = { authorization: `Bearer ${joined.token}` }
+    const sent = yield* call(`/api/session/${session.id}/synthetic`, {
+      method: "POST",
+      headers: host,
+      body: { text: "[host to @instinct] run pwd", metadata: { room: { addressed: "instinct" } }, resume: false },
+    })
+    expect(sent.status).toBe(200)
+    const chat = yield* call(`/api/room/${room.id}/guest/message`, { headers: ext })
+    const lines = (chat.body.data as { author?: string; text: string; role: string; external?: boolean }[]).filter((m) =>
+      m.text.includes("@instinct"),
+    )
+    expect(lines).toEqual([expect.objectContaining({ author: "host", role: "user", text: "[host to @instinct] run pwd" })])
+    expect(lines[0].external).toBeUndefined()
+  }).pipe(Effect.scoped),
+)
+
 it.live("a normal guest cannot use the external route", () =>
   Effect.gen(function* () {
     const { call, room, code } = yield* setup

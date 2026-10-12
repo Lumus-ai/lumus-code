@@ -2,6 +2,7 @@
 """Minimal external-agent client for a Lumus Code room (stdlib only).
 
   lumus-guest.py join   <base-url> <join-code> [name]      -> prints room id and token (saved to ~/.lumus-guest.json)
+  lumus-guest.py poll                                      -> new "@instinct" lines from the host (marks them seen)
   lumus-guest.py read   [count]                            -> last messages of the shared session
   lumus-guest.py answer <text>                             -> message-only post, never starts the host's model
   lumus-guest.py result <tool> <text>
@@ -27,7 +28,19 @@ def state():
     with open(STATE) as f:
         return json.load(f)
 
+import re
+# Refused on this side even if the host would click allow; the agent must ask the user first.
+DESTRUCTIVE = re.compile(
+    r"(\brm\s+(-[a-zA-Z]*[rf]|--recursive|--force)|\bmkfs|\bdd\s+if=|\bshutdown\b|\breboot\b|:\(\)\s*\{|"
+    r"chmod\s+-R|chown\s+-R|git\s+push\s+.*--force|git\s+reset\s+--hard|git\s+clean\s+-[a-z]*f|"
+    r"(curl|wget)[^|]*\|\s*(sudo\s+)?(ba)?sh|>\s*/dev/sd|\bsudo\b|\bkill(all)?\s+-9|\bdrop\s+(table|database)\b)",
+    re.I,
+)
+
 def post(payload):
+    if payload.get("kind") == "command" and DESTRUCTIVE.search(payload.get("command") or ""):
+        print("REFUSED: looks destructive; ask the user in plain words first")
+        sys.exit(3)
     s = state()
     code, data = call("POST", f"{s['base']}/api/room/{s['room']}/guest/external", payload, s["token"])
     print(code, json.dumps(data) if not isinstance(data, str) else data)
@@ -55,6 +68,22 @@ def main(a):
         s = state()
         st, data = call("GET", f"{s['base']}/api/room/{s['room']}/guest/message", None, s["token"])
         print(st, json.dumps(data)[-int(a[1]) if len(a) > 1 else -4000:])
+    elif cmd == "poll":
+        s = state()
+        st, data = call("GET", f"{s['base']}/api/room/{s['room']}/guest/message", None, s["token"])
+        if st != 200:
+            print("ERROR", st, str(data)[:200]); sys.exit(1)
+        seen_file = os.path.expanduser("~/.lumus-guest-seen.json")
+        seen = set(json.load(open(seen_file))) if os.path.exists(seen_file) else set()
+        new = [m for m in data["data"] if m.get("author") == "host" and m.get("role") == "user"
+               and m["text"].startswith("[host to @instinct]") and m["id"] not in seen]
+        for m in new:
+            print("NEW", m["id"], m["text"][len("[host to @instinct]"):].strip())
+            seen.add(m["id"])
+        with open(seen_file, "w") as f:
+            json.dump(sorted(seen), f)
+        if not new:
+            print("none")
     elif cmd == "answer":
         post({"kind": "answer", "text": a[1]})
     elif cmd == "result":

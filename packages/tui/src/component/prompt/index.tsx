@@ -7,6 +7,7 @@ import {
   decodePasteBytes,
   type KeyEvent,
 } from "@opentui/core"
+import { ADDRESSEE, addressedToExternal } from "../../util/addressed"
 import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, Switch, Match, For } from "solid-js"
 import path from "path"
 import { useLocal } from "../../context/local"
@@ -1150,6 +1151,27 @@ export function Prompt(props: PromptProps) {
     if (slash) {
       clearPrompt()
       await slash.command.run(slash.input)
+      return true
+    }
+    const addressed = props.sessionID && store.mode !== "shell" ? addressedToExternal(inputText) : undefined
+    if (addressed !== undefined) {
+      if (addressed === "") {
+        toast.show({ message: "Write the request after @instinct", variant: "warning" })
+        return false
+      }
+      clearPrompt()
+      // No model run: the line only goes to the room chat for the external agent.
+      await client.api.session
+        .synthetic({
+          sessionID: props.sessionID,
+          text: `[host to @${ADDRESSEE}] ${addressed}`,
+          description: "Host message for the external agent",
+          metadata: { room: { addressed: ADDRESSEE } },
+          resume: false,
+        })
+        .catch((error) =>
+          toast.show({ title: "Failed to send message to @instinct", message: errorMessage(error), variant: "error" }),
+        )
       return true
     }
     const slashHead = parseSlashHead(inputText, /\s/)
