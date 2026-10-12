@@ -27,6 +27,7 @@ import { SapAICorePlugin } from "./provider/sap-ai-core.js"
 import { VercelPlugin } from "./provider/vercel.js"
 import { VLLMPlugin } from "./provider/vllm.js"
 import { XAIPlugin } from "./provider/xai.js"
+import { XKiroPlugin } from "./provider/xkiro.js"
 import { ZenmuxPlugin } from "./provider/zenmux.js"
 import type { PluginInternal } from "./internal.js"
 
@@ -59,6 +60,7 @@ export const ProviderPlugins: PluginInternal.InternalPlugin[] = [
   VercelPlugin,
   VLLMPlugin,
   XAIPlugin,
+  XKiroPlugin,
   ZenmuxPlugin,
   DynamicProviderPlugin,
 ]
