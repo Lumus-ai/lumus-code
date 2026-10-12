@@ -5,6 +5,12 @@ export type Language = "en" | "ru"
 // English text is the key, so untranslated strings fall back to it as written.
 // `{name}` placeholders are filled from the values passed to `t`.
 const ru: Record<string, string> = {
+  // External agent (Instinct)
+  "Trust Instinct (external)": "Доверять Instinct (внешний агент)",
+  "Run prompts from the external agent without asking each time. Off by default; commands and file edits still ask. Turns off when you get a new join code.":
+    "Выполнять промпты внешнего агента без вопроса. По умолчанию выключено; команды и правки файлов всё равно спрашивают. Выключается при новом коде входа.",
+  "Prompts run without asking": "Промпты без вопроса",
+  "Ask for each prompt": "Спрашивать каждый промпт",
   // Bar
   Server: "Сервер",
   UI: "Интерфейс",
