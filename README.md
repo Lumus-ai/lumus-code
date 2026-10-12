@@ -1,5 +1,7 @@
 # Lumus Code
 
+Русская версия: [README.ru.md](README.ru.md)
+
 An AI coding agent for the terminal, with multiplayer rooms, a project AI team, notes, a Hub of CLI tools, a Gemini-style theme, and an **external-agent mode** that lets an outside agent join a room safely.
 
 > **Provenance.** Lumus Code is based on [OpenCode](https://github.com/anomalyco/opencode) and [NeiP4n/opencode-plus-plus](https://github.com/NeiP4n/opencode-plus-plus), both MIT licensed. The original LICENSE and copyright notice are kept in [LICENSE](LICENSE). **Lumus Code is not built by or affiliated with the OpenCode team.** Internal package names still say `opencode` in many places so the code stays easy to merge with upstream.
