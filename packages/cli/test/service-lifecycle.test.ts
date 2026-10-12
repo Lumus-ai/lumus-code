@@ -187,7 +187,7 @@ async function serviceHome(options: { readonly failBoot?: boolean } = {}) {
     root,
     port,
     entry: homeEntry,
-    registration: path.join(root, "state", "opencode", "service-local.json"),
+    registration: path.join(root, "state", "lumus-code", "service-local.json"),
     env: Object.fromEntries(
       Object.entries(isolatedEnv(root, overrides)).filter((entry): entry is [string, string] => entry[1] !== undefined),
     ),
