@@ -54,6 +54,8 @@ An outside agent (for example an Instinct assistant) can join a room, post answe
    {"kind": "edit",        "path": "src/a.ts", "content": "...", "text": "why"}
    ```
 
+A small stdlib-only Python client is in `script/lumus-guest.py` (`join`, `read`, `answer`, `result`, `command`, `edit`). It was tested against a local server for join, answer, tool_result and read; command waits for the Host as designed.
+
 Rules the server enforces:
 
 - `answer` and `tool_result` are **message-only**: they are queued in the session as messages from the external author and shown in the room chat as `<name> (external)`. The Host's model is not started by them. Note that the text sits in the session's inbox and the Host model will see it as context the next time it runs, so treat it as untrusted input.
