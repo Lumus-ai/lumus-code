@@ -267,11 +267,41 @@ export function Prompt(props: PromptProps) {
       (props.sessionID ? data.session.get(props.sessionID)?.projectID : undefined) ?? data.location.info()?.project.id,
     sessionID: () => props.sessionID,
   })
+  // Message-only line for the external agent: the host model is not run.
+  const sendToInstinct = async (text: string) => {
+    const sessionID = props.sessionID
+    if (!sessionID) {
+      toast.show({ message: "Open a session first", variant: "warning" })
+      return
+    }
+    if (!text.trim()) {
+      toast.show({ message: "Write the request after /instinct", variant: "warning" })
+      return
+    }
+    await client.api.session
+      .synthetic({
+        sessionID,
+        text: `[host to @${ADDRESSEE}] ${text.trim()}`,
+        description: "Host message for the external agent",
+        metadata: { room: { addressed: ADDRESSEE } },
+        resume: false,
+      })
+      .then(() => toast.show({ message: "Sent to Instinct. It checks the room about every 5 minutes.", variant: "info" }))
+      .catch((error) =>
+        toast.show({ title: "Failed to send message to @instinct", message: errorMessage(error), variant: "error" }),
+      )
+  }
   const [pendingDirectory, setPendingDirectory] = createSignal<string>()
   Keymap.createLayer(() => ({
     mode: "global",
     enabled: !disabled(),
     commands: [
+      {
+        id: "session.instinct",
+        title: "Send to Instinct (external agent)",
+        slash: { name: "instinct", arguments: true },
+        run: async (input) => sendToInstinct(input ?? ""),
+      },
       {
         id: "session.cd",
         title: "Change working directory",
@@ -1155,23 +1185,8 @@ export function Prompt(props: PromptProps) {
     }
     const addressed = props.sessionID && store.mode !== "shell" ? addressedToExternal(inputText) : undefined
     if (addressed !== undefined) {
-      if (addressed === "") {
-        toast.show({ message: "Write the request after @instinct", variant: "warning" })
-        return false
-      }
       clearPrompt()
-      // No model run: the line only goes to the room chat for the external agent.
-      await client.api.session
-        .synthetic({
-          sessionID: props.sessionID,
-          text: `[host to @${ADDRESSEE}] ${addressed}`,
-          description: "Host message for the external agent",
-          metadata: { room: { addressed: ADDRESSEE } },
-          resume: false,
-        })
-        .catch((error) =>
-          toast.show({ title: "Failed to send message to @instinct", message: errorMessage(error), variant: "error" }),
-        )
+      await sendToInstinct(addressed)
       return true
     }
     const slashHead = parseSlashHead(inputText, /\s/)

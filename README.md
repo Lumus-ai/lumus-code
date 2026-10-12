@@ -54,7 +54,7 @@ An outside agent (for example an Instinct assistant) can join a room, post answe
    {"kind": "edit",        "path": "src/a.ts", "content": "...", "text": "why"}
    ```
 
-A small stdlib-only Python client is in `script/lumus-guest.py` (`join`, `read`, `answer`, `result`, `command`, `edit`). It was tested against a local server for join, answer, tool_result and read; command waits for the Host as designed.
+In the TUI the Host writes `/instinct <text>` or `@instinct <text>` to talk to the external agent without running the Host model. A small stdlib-only Python client is in `script/lumus-guest.py` (`join`, `read`, `answer`, `result`, `command`, `edit`). It was tested against a local server for join, answer, tool_result and read; command waits for the Host as designed.
 
 Rules the server enforces:
 
