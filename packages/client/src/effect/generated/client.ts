@@ -362,6 +362,8 @@ import type {
   RoomGuestNoteOutput,
   RoomGuestPromptInput,
   RoomGuestPromptOutput,
+  RoomGuestExternalInput,
+  RoomGuestExternalOutput,
   RoomGuestPermissionListInput,
   RoomGuestPermissionListOutput,
   RoomGuestPermissionReplyInput,
@@ -1848,6 +1850,7 @@ const EndpointRoomUpdate = (raw: RawClient["server.room"]) => (input: RoomUpdate
         guestApprovals: input["guestApprovals"],
         defaultRole: input["defaultRole"],
         open: input["open"],
+        trustExternalPrompt: input["trustExternalPrompt"],
       },
     }).pipe(
       Effect.mapError(mapClientError),
@@ -1891,7 +1894,13 @@ const EndpointRoomPublic = (raw: RawClient["server.room"]) => () =>
 const EndpointRoomJoin = (raw: RawClient["server.room"]) => (input: RoomJoinInput) =>
   preserveEffect<RoomJoinOutput>()(
     raw["room.join"]({
-      payload: { code: input["code"], roomID: input["roomID"], name: input["name"], device: input["device"] },
+      payload: {
+        code: input["code"],
+        roomID: input["roomID"],
+        name: input["name"],
+        device: input["device"],
+        external: input["external"],
+      },
     }).pipe(Effect.mapError(mapClientError)),
   )
 
@@ -2150,6 +2159,25 @@ const EndpointRoomGuestPrompt = (raw: RawClient["server.room"]) => (input: RoomG
     ),
   )
 
+const EndpointRoomGuestExternal = (raw: RawClient["server.room"]) => (input: RoomGuestExternalInput) =>
+  preserveEffect<RoomGuestExternalOutput>()(
+    raw["room.guest.external"]({
+      params: { roomID: input["roomID"] },
+      payload: {
+        kind: input["kind"],
+        text: input["text"],
+        tool: input["tool"],
+        command: input["command"],
+        path: input["path"],
+        content: input["content"],
+        sessionID: input["sessionID"],
+      },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
 const EndpointRoomGuestPermissionList = (raw: RawClient["server.room"]) => (input: RoomGuestPermissionListInput) =>
   preserveEffect<RoomGuestPermissionListOutput>()(
     raw["room.guest.permission.list"]({
@@ -2205,6 +2233,7 @@ const adaptGroupRoom = (raw: RawClient["server.room"]) => ({
     messages: EndpointRoomGuestMessages(raw),
     note: EndpointRoomGuestNote(raw),
     prompt: EndpointRoomGuestPrompt(raw),
+    external: EndpointRoomGuestExternal(raw),
     permission: { list: EndpointRoomGuestPermissionList(raw), reply: EndpointRoomGuestPermissionReply(raw) },
   },
   link: { list: EndpointRoomLinkList(raw), save: EndpointRoomLinkSave(raw), remove: EndpointRoomLinkRemove(raw) },

@@ -143,6 +143,7 @@ export const RoomGroup = HttpApiGroup.make("server.room")
         guestApprovals: Schema.Boolean.pipe(Schema.optional),
         defaultRole: Room.Role.pipe(Schema.optional),
         open: Schema.Boolean.pipe(Schema.optional),
+        trustExternalPrompt: Schema.Boolean.pipe(Schema.optional),
       }),
       success: Schema.Struct({ data: Room.Info }),
       error: RoomNotFoundError,

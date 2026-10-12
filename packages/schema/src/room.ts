@@ -39,6 +39,8 @@ export const Info = Schema.Struct({
   directory: Schema.String.pipe(Schema.optional),
   // Whether guests may join without a code; absent on rooms saved before the option existed.
   open: Schema.Boolean.pipe(Schema.optional),
+  // Host setting: prompts from an external agent run without a permission prompt. Off by default; cleared when a join code is issued.
+  trustExternalPrompt: Schema.Boolean.pipe(Schema.optional),
   created: Schema.Number,
 }).annotate({ identifier: "Room.Info" })
 export interface Info extends Schema.Schema.Type<typeof Info> {}

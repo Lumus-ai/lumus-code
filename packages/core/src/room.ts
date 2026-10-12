@@ -41,6 +41,7 @@ export const UpdateInput = Schema.Struct({
   guestApprovals: Schema.Boolean.pipe(Schema.optional),
   defaultRole: Room.Role.pipe(Schema.optional),
   open: Schema.Boolean.pipe(Schema.optional),
+  trustExternalPrompt: Schema.Boolean.pipe(Schema.optional),
 }).annotate({ identifier: "Room.UpdateInput" })
 export type UpdateInput = typeof UpdateInput.Type
 
@@ -140,6 +141,7 @@ const layer = Layer.effect(
           guestApprovals: input.guestApprovals ?? room.guestApprovals,
           defaultRole: input.defaultRole ?? room.defaultRole,
           open: input.open ?? room.open ?? false,
+          trustExternalPrompt: input.trustExternalPrompt ?? room.trustExternalPrompt ?? false,
         })
       }),
       remove: Effect.fn("Room.remove")(function* (id: ID) {

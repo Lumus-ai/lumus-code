@@ -466,6 +466,7 @@ export type RoomInfo = {
   defaultRole?: "viewer" | "member" | "helper" | "cohost" | undefined
   directory?: string | undefined
   open?: boolean | undefined
+  trustExternalPrompt?: boolean | undefined
   created: number
 }
 
@@ -489,7 +490,19 @@ export type RoomDodNote = { name: string; text: string }
 export type RoomEvent = {
   seq: number
   at: number
-  kind: "join" | "leave" | "remove" | "ban" | "take" | "release" | "expire" | "pass" | "fail" | "run"
+  kind:
+    | "join"
+    | "leave"
+    | "remove"
+    | "ban"
+    | "take"
+    | "release"
+    | "expire"
+    | "pass"
+    | "fail"
+    | "run"
+    | "external"
+    | "edit"
   who: string
   item?: string | undefined
   detail?: string | undefined
@@ -508,6 +521,7 @@ export type RoomInfo1 = {
   defaultRole?: "viewer" | "member" | "helper" | "cohost" | null
   directory?: string | null
   open?: boolean | null
+  trustExternalPrompt?: boolean | null
   created: number | "Infinity" | "-Infinity" | "NaN"
 }
 
@@ -533,6 +547,7 @@ export type RoomMemberView = {
   device?: string | undefined
   address?: string | undefined
   joined: number
+  external?: boolean | undefined
   seen?: number | undefined
   online: boolean
 }
@@ -544,6 +559,7 @@ export type RoomMember = {
   device?: string | undefined
   address?: string | undefined
   joined: number
+  external?: boolean | undefined
 }
 
 export type RoomBan = {
@@ -560,6 +576,7 @@ export type RoomMessage = {
   author?: string | null
   text: string
   created: number | "Infinity" | "-Infinity" | "NaN"
+  external?: boolean | null
 }
 
 export type OrchestraProject = {
@@ -1856,6 +1873,12 @@ export type RoomJoined = {
   guest: RoomGuest
   role: "viewer" | "member" | "helper" | "cohost"
   room: RoomInfo
+}
+
+export type RoomExternalResult = {
+  kind: "answer" | "tool_result" | "command" | "edit" | "prompt"
+  run?: RoomRunResult | undefined
+  edit?: { path: string; bytes: number } | undefined
 }
 
 export type OrchestraTemplate = {
@@ -7193,6 +7216,7 @@ export type RoomUpdateInput = {
     readonly guestApprovals?: boolean | undefined
     readonly defaultRole?: "viewer" | "member" | "helper" | "cohost" | undefined
     readonly open?: boolean | undefined
+    readonly trustExternalPrompt?: boolean | undefined
   }["name"]
   readonly ai?: {
     readonly name?: string | undefined
@@ -7200,6 +7224,7 @@ export type RoomUpdateInput = {
     readonly guestApprovals?: boolean | undefined
     readonly defaultRole?: "viewer" | "member" | "helper" | "cohost" | undefined
     readonly open?: boolean | undefined
+    readonly trustExternalPrompt?: boolean | undefined
   }["ai"]
   readonly guestApprovals?: {
     readonly name?: string | undefined
@@ -7207,6 +7232,7 @@ export type RoomUpdateInput = {
     readonly guestApprovals?: boolean | undefined
     readonly defaultRole?: "viewer" | "member" | "helper" | "cohost" | undefined
     readonly open?: boolean | undefined
+    readonly trustExternalPrompt?: boolean | undefined
   }["guestApprovals"]
   readonly defaultRole?: {
     readonly name?: string | undefined
@@ -7214,6 +7240,7 @@ export type RoomUpdateInput = {
     readonly guestApprovals?: boolean | undefined
     readonly defaultRole?: "viewer" | "member" | "helper" | "cohost" | undefined
     readonly open?: boolean | undefined
+    readonly trustExternalPrompt?: boolean | undefined
   }["defaultRole"]
   readonly open?: {
     readonly name?: string | undefined
@@ -7221,7 +7248,16 @@ export type RoomUpdateInput = {
     readonly guestApprovals?: boolean | undefined
     readonly defaultRole?: "viewer" | "member" | "helper" | "cohost" | undefined
     readonly open?: boolean | undefined
+    readonly trustExternalPrompt?: boolean | undefined
   }["open"]
+  readonly trustExternalPrompt?: {
+    readonly name?: string | undefined
+    readonly ai?: "linked" | "discovered" | undefined
+    readonly guestApprovals?: boolean | undefined
+    readonly defaultRole?: "viewer" | "member" | "helper" | "cohost" | undefined
+    readonly open?: boolean | undefined
+    readonly trustExternalPrompt?: boolean | undefined
+  }["trustExternalPrompt"]
 }
 
 export type RoomUpdateOutput = { data: RoomInfo }["data"]
@@ -7261,25 +7297,36 @@ export type RoomJoinInput = {
     readonly roomID?: string | undefined
     readonly name: string
     readonly device?: string | undefined
+    readonly external?: boolean | undefined
   }["code"]
   readonly roomID?: {
     readonly code?: string | undefined
     readonly roomID?: string | undefined
     readonly name: string
     readonly device?: string | undefined
+    readonly external?: boolean | undefined
   }["roomID"]
   readonly name: {
     readonly code?: string | undefined
     readonly roomID?: string | undefined
     readonly name: string
     readonly device?: string | undefined
+    readonly external?: boolean | undefined
   }["name"]
   readonly device?: {
     readonly code?: string | undefined
     readonly roomID?: string | undefined
     readonly name: string
     readonly device?: string | undefined
+    readonly external?: boolean | undefined
   }["device"]
+  readonly external?: {
+    readonly code?: string | undefined
+    readonly roomID?: string | undefined
+    readonly name: string
+    readonly device?: string | undefined
+    readonly external?: boolean | undefined
+  }["external"]
 }
 
 export type RoomJoinOutput = RoomJoined
@@ -7680,6 +7727,75 @@ export type RoomGuestPromptInput = {
 }
 
 export type RoomGuestPromptOutput = { data: SessionInboxUser }["data"]
+
+export type RoomGuestExternalInput = {
+  readonly roomID: { readonly roomID: string }["roomID"]
+  readonly kind: {
+    readonly kind: "answer" | "tool_result" | "command" | "edit" | "prompt"
+    readonly text?: string | undefined
+    readonly tool?: string | undefined
+    readonly command?: string | undefined
+    readonly path?: string | undefined
+    readonly content?: string | undefined
+    readonly sessionID?: string | undefined
+  }["kind"]
+  readonly text?: {
+    readonly kind: "answer" | "tool_result" | "command" | "edit" | "prompt"
+    readonly text?: string | undefined
+    readonly tool?: string | undefined
+    readonly command?: string | undefined
+    readonly path?: string | undefined
+    readonly content?: string | undefined
+    readonly sessionID?: string | undefined
+  }["text"]
+  readonly tool?: {
+    readonly kind: "answer" | "tool_result" | "command" | "edit" | "prompt"
+    readonly text?: string | undefined
+    readonly tool?: string | undefined
+    readonly command?: string | undefined
+    readonly path?: string | undefined
+    readonly content?: string | undefined
+    readonly sessionID?: string | undefined
+  }["tool"]
+  readonly command?: {
+    readonly kind: "answer" | "tool_result" | "command" | "edit" | "prompt"
+    readonly text?: string | undefined
+    readonly tool?: string | undefined
+    readonly command?: string | undefined
+    readonly path?: string | undefined
+    readonly content?: string | undefined
+    readonly sessionID?: string | undefined
+  }["command"]
+  readonly path?: {
+    readonly kind: "answer" | "tool_result" | "command" | "edit" | "prompt"
+    readonly text?: string | undefined
+    readonly tool?: string | undefined
+    readonly command?: string | undefined
+    readonly path?: string | undefined
+    readonly content?: string | undefined
+    readonly sessionID?: string | undefined
+  }["path"]
+  readonly content?: {
+    readonly kind: "answer" | "tool_result" | "command" | "edit" | "prompt"
+    readonly text?: string | undefined
+    readonly tool?: string | undefined
+    readonly command?: string | undefined
+    readonly path?: string | undefined
+    readonly content?: string | undefined
+    readonly sessionID?: string | undefined
+  }["content"]
+  readonly sessionID?: {
+    readonly kind: "answer" | "tool_result" | "command" | "edit" | "prompt"
+    readonly text?: string | undefined
+    readonly tool?: string | undefined
+    readonly command?: string | undefined
+    readonly path?: string | undefined
+    readonly content?: string | undefined
+    readonly sessionID?: string | undefined
+  }["sessionID"]
+}
+
+export type RoomGuestExternalOutput = { data: RoomExternalResult }["data"]
 
 export type RoomGuestPermissionListInput = {
   readonly roomID: { readonly roomID: string }["roomID"]

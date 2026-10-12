@@ -262,6 +262,23 @@ export function DialogHost(props: { onClose?: () => void }) {
                 {t(ROLE_LABEL[joinRole(room)])}
               </Button>
             </Setting>
+            <Setting
+              label={t("Trust Instinct (external)")}
+              help={t(
+                "Run prompts from the external agent without asking each time. Off by default; commands and file edits still ask. Turns off when you get a new join code.",
+              )}
+            >
+              <Button
+                disabled={busy()}
+                onClick={() =>
+                  void run(() =>
+                    client.api.room.update({ roomID: room.id, trustExternalPrompt: room.trustExternalPrompt !== true }),
+                  )
+                }
+              >
+                {room.trustExternalPrompt === true ? t("Prompts run without asking") : t("Ask for each prompt")}
+              </Button>
+            </Setting>
             <Setting label={t("People")} help={t("Who joined, their roles; remove or ban a guest.")}>
               <Button
                 onClick={() => {

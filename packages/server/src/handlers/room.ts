@@ -301,6 +301,10 @@ export const RoomHandler = HttpApiBuilder.group(Api, "server.room", (handlers) =
         "room.code",
         Effect.fn(function* (ctx) {
           yield* rooms.get(ctx.params.roomID).pipe(Effect.catchTag("Room.NotFoundError", missingRoom))
+          // A new join code resets the trust the host gave an external agent.
+          yield* rooms
+            .update(ctx.params.roomID, { trustExternalPrompt: false })
+            .pipe(Effect.catchTag("Room.NotFoundError", missingRoom))
           return yield* codes.issueCode(ctx.params.roomID)
         }),
       )
@@ -596,7 +600,9 @@ export const RoomHandler = HttpApiBuilder.group(Api, "server.room", (handlers) =
             if (text === "") return yield* new InvalidRequestError({ message: "Prompt is empty", field: "text" })
             if (text.length > 20_000) return yield* new InvalidRequestError({ message: "Prompt is too long", field: "text" })
             // The host sees the full text in the permission prompt; no answer, no model run.
-            yield* ask("room.prompt", text.slice(0, 2000), { prompt: text.slice(0, 2000) })
+            // Skipped only when the host switched on "trust Instinct (external) prompts" for this room.
+            if (joined.room.trustExternalPrompt !== true)
+              yield* ask("room.prompt", text.slice(0, 2000), { prompt: text.slice(0, 2000) })
             codes.record(joined.room.id, { kind: "external", who, detail: "prompt" })
             yield* sessions
               .prompt({

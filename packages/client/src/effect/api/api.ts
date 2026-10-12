@@ -2510,6 +2510,7 @@ export type RoomUpdateInput = {
   readonly guestApprovals?: boolean | undefined
   readonly defaultRole?: "viewer" | "member" | "helper" | "cohost" | undefined
   readonly open?: boolean | undefined
+  readonly trustExternalPrompt?: boolean | undefined
 }
 export type RoomUpdateOutput = Room.Info
 export type RoomUpdateOperation<E = never> = (input: RoomUpdateInput) => Effect.Effect<RoomUpdateOutput, E>
@@ -2549,6 +2550,7 @@ export type RoomJoinInput = {
   readonly roomID?: Room.ID | undefined
   readonly name: string
   readonly device?: string | undefined
+  readonly external?: boolean | undefined
 }
 export type RoomJoinOutput = Room.Joined
 export type RoomJoinOperation<E = never> = (input: RoomJoinInput) => Effect.Effect<RoomJoinOutput, E>
@@ -3734,6 +3736,21 @@ export type RoomGuestPromptOperation<E = never> = (
   input: RoomGuestPromptInput,
 ) => Effect.Effect<RoomGuestPromptOutput, E>
 
+export type RoomGuestExternalInput = {
+  readonly roomID: Room.ID
+  readonly kind: "answer" | "tool_result" | "command" | "edit" | "prompt"
+  readonly text?: string | undefined
+  readonly tool?: string | undefined
+  readonly command?: string | undefined
+  readonly path?: string | undefined
+  readonly content?: string | undefined
+  readonly sessionID?: Session.ID | undefined
+}
+export type RoomGuestExternalOutput = Room.ExternalResult
+export type RoomGuestExternalOperation<E = never> = (
+  input: RoomGuestExternalInput,
+) => Effect.Effect<RoomGuestExternalOutput, E>
+
 export type RoomGuestPermissionListInput = { readonly roomID: Room.ID; readonly sessionID?: Session.ID | undefined }
 export type RoomGuestPermissionListOutput = ReadonlyArray<Permission.Request>
 export type RoomGuestPermissionListOperation<E = never> = (
@@ -3788,6 +3805,7 @@ export interface RoomApi<E = never> {
     readonly messages: RoomGuestMessagesOperation<E>
     readonly note: RoomGuestNoteOperation<E>
     readonly prompt: RoomGuestPromptOperation<E>
+    readonly external: RoomGuestExternalOperation<E>
     readonly permission: {
       readonly list: RoomGuestPermissionListOperation<E>
       readonly reply: RoomGuestPermissionReplyOperation<E>

@@ -957,5 +957,18 @@ it.live("an external edit and command wait for the host, stay in the project, an
     expect((yield* Fiber.join(allowed)).status).toBe(200)
     const after = yield* call(`/api/room/${room.id}/guest/message`, { headers: ext })
     expect(JSON.stringify(after.body.data)).toContain("build the thing")
+
+    // host trust: prompts run without asking, nothing else changes, a new join code revokes it
+    expect((yield* call(`/api/room/${room.id}`, { method: "PATCH", headers: ext, body: { trustExternalPrompt: true } })).status).not.toBe(200)
+    const trusted = yield* call(`/api/room/${room.id}`, { method: "PATCH", headers: host, body: { trustExternalPrompt: true } })
+    expect(trusted.body.data.trustExternalPrompt).toBe(true)
+    const quick = yield* post({ kind: "prompt", text: "second job" })
+    expect(quick.status).toBe(200)
+    const cmd = yield* post({ kind: "command", command: "echo hi" }).pipe(Effect.forkScoped)
+    expect((yield* nextRequest).action).toBe("room.run")
+    yield* Fiber.interrupt(cmd)
+    yield* call(`/api/room/${room.id}/code`, { method: "POST", headers: host })
+    const revoked = yield* call(`/api/room`, { headers: host })
+    expect(JSON.stringify(revoked.body)).not.toContain('"trustExternalPrompt":true')
   }).pipe(Effect.scoped),
 )
