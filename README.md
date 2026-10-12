@@ -89,7 +89,7 @@ MIT. Copyright (c) 2025 opencode, and the contributors of opencode-plus-plus and
 
 1. Open the Connect / providers dialog, choose **xKiro**, and paste your API key there (or set `XKIRO_API_KEY`).
 2. Open Switch model. Every model from `GET https://api.xkiro.com/v1/models` is listed with its tier in the name,
-   for example `Qwen3 Coder Plus (Free) [free]`, `[paid]` or `[premium]`. Free models are listed first.
+   for example `Qwen3 Coder Plus (Free) [free]`, `[paid]` or `[premium]`. Free models are listed first (a good free coding model on top). With a key, the provider name also shows what is left today, for example `xKiro - free left today: 299.6M tokens, wallet $0.50` (from `GET /v1/usage`, refreshed when the key is connected or the app starts).
 3. Pick one. Context limit, output limit, tool and image support, reasoning levels and prices come from the gateway.
 
 Status: the model-list mapping, the connect methods (key and env) and the provider definition are covered by unit tests

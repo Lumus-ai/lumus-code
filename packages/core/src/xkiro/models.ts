@@ -103,5 +103,60 @@ export function parse(payload: unknown): readonly Spec[] {
       },
     ]
   })
-  return specs.toSorted((a, b) => tierOrder[a.tier] - tierOrder[b.tier] || a.name.localeCompare(b.name))
+  const rank = (id: string) => (preferred.includes(id) ? preferred.indexOf(id) : preferred.length)
+  return specs.toSorted(
+    (a, b) => tierOrder[a.tier] - tierOrder[b.tier] || rank(a.id) - rank(b.id) || a.name.localeCompare(b.name),
+  )
 }
+
+const Usage = Schema.Struct({
+  plan: Schema.optional(Schema.NullOr(Schema.String)),
+  free_tokens: Schema.optional(
+    Schema.Struct({ used_today: Schema.Number, limit_per_day: Schema.Number, remaining: Schema.Number }),
+  ),
+  wallet: Schema.optional(Schema.NullOr(Schema.Struct({ balance_usd: Schema.String }))),
+})
+const decodeUsage = Schema.decodeUnknownOption(Usage)
+
+export type UsageSummary = { readonly freeLeft?: number; readonly balanceUSD?: number; readonly plan?: string }
+
+/** Pick the numbers worth showing from GET /v1/usage. */
+export function parseUsage(payload: unknown): UsageSummary | undefined {
+  const usage = Option.getOrUndefined(decodeUsage(payload))
+  if (!usage) return undefined
+  const balance = usage.wallet ? Number(usage.wallet.balance_usd) : undefined
+  return {
+    freeLeft: usage.free_tokens?.remaining,
+    balanceUSD: balance !== undefined && Number.isFinite(balance) ? balance : undefined,
+    plan: usage.plan ?? undefined,
+  }
+}
+
+/** "xKiro - free left today: 299.6M tokens, wallet $0.00". Needs a key; returns the plain name without one. */
+export function title(usage: UsageSummary | undefined) {
+  if (!usage) return "xKiro"
+  const parts: string[] = []
+  if (usage.freeLeft !== undefined) parts.push(`free left today: ${compact(usage.freeLeft)} tokens`)
+  if (usage.balanceUSD !== undefined) parts.push(`wallet $${usage.balanceUSD.toFixed(2)}`)
+  return parts.length ? `xKiro - ${parts.join(", ")}` : "xKiro"
+}
+
+function compact(value: number) {
+  if (value >= 1e9) return `${(value / 1e9).toFixed(1)}B`
+  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`
+  if (value >= 1e3) return `${(value / 1e3).toFixed(0)}K`
+  return String(Math.trunc(value))
+}
+
+/** Free to call and does not count against limits (xKiro docs). */
+export async function loadUsage(apiKey: string, url = baseURL) {
+  const response = await fetch(`${url.replace(/\/+$/, "")}/usage`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(5_000),
+  })
+  if (!response.ok) return undefined
+  return parseUsage(await response.json())
+}
+
+// Free coding-capable models the picker should show first.
+const preferred = ["qwen/qwen3-coder-plus:free", "qwen/qwen3.7-plus:free", "deepseek/deepseek-v4-flash"]

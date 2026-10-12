@@ -87,3 +87,45 @@ test("load fails on a non-OK response", async () => {
     await server.stop(true)
   }
 })
+
+test("usage numbers become a short provider title", () => {
+  const usage = XKiroModels.parseUsage({
+    object: "usage",
+    plan: null,
+    windows: [],
+    free_tokens: { used_today: 412030, limit_per_day: 300000000, remaining: 299587970 },
+    wallet: { balance_usd: "0.500000", held_usd: "0" },
+  })
+  expect(usage).toEqual({ freeLeft: 299587970, balanceUSD: 0.5, plan: undefined })
+  expect(XKiroModels.title(usage)).toBe("xKiro - free left today: 299.6M tokens, wallet $0.50")
+  expect(XKiroModels.title(undefined)).toBe("xKiro")
+  expect(XKiroModels.parseUsage({ nope: 1 })).toEqual({ freeLeft: undefined, balanceUSD: undefined, plan: undefined })
+})
+
+test("the preferred free coding model sorts first", () => {
+  const specs = XKiroModels.parse({
+    data: [
+      { id: "a/other:free", access_tier: "free" },
+      { id: "qwen/qwen3.7-plus:free", access_tier: "free" },
+      { id: "qwen/qwen3-coder-plus:free", access_tier: "free" },
+    ],
+  })
+  expect(specs.map((item) => item.id)).toEqual(["qwen/qwen3-coder-plus:free", "qwen/qwen3.7-plus:free", "a/other:free"])
+})
+
+test("loadUsage reads /usage with the key and yields nothing on failure", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: (request) => {
+      if (request.headers.get("Authorization") !== "Bearer good") return new Response("no", { status: 401 })
+      return Response.json({ free_tokens: { used_today: 1, limit_per_day: 10, remaining: 9 } })
+    },
+  })
+  try {
+    const url = `${server.url.origin}/v1`
+    expect((await XKiroModels.loadUsage("good", url))?.freeLeft).toBe(9)
+    expect(await XKiroModels.loadUsage("bad", url)).toBeUndefined()
+  } finally {
+    await server.stop(true)
+  }
+})

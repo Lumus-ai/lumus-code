@@ -16,7 +16,7 @@ export const XKiroPlugin = define({
   effect: Effect.fn(function* (ctx) {
     const bus = yield* Bus.Service
     const loading = Semaphore.makeUnsafe(1)
-    const loaded: { models: readonly XKiroModels.Spec[] } = { models: [] }
+    const loaded: { models: readonly XKiroModels.Spec[]; usage?: XKiroModels.UsageSummary } = { models: [] }
 
     yield* ctx.integration.transform((editor) => {
       editor.update(integrationID, (integration) => (integration.name = "xKiro"))
@@ -26,7 +26,7 @@ export const XKiroPlugin = define({
 
     yield* ctx.provider.transform((providers) => {
       providers.update(XKiroModels.providerID, (provider) => {
-        provider.name = "xKiro"
+        provider.name = XKiroModels.title(loaded.usage)
         provider.package = "@opencode/ai/providers/openai-compatible"
         provider.settings = { baseURL: XKiroModels.baseURL, provider: XKiroModels.providerID }
       })
@@ -72,6 +72,9 @@ export const XKiroPlugin = define({
         Effect.catch((cause) => Effect.logWarning("failed to sync xKiro models", { cause }).pipe(Effect.as(undefined))),
       )
       if (models) loaded.models = models
+      loaded.usage = apiKey
+        ? yield* Effect.tryPromise(() => XKiroModels.loadUsage(apiKey)).pipe(Effect.orElseSucceed(() => undefined))
+        : undefined
     })
     const refresh = () => loading.withPermit(load().pipe(Effect.andThen(ctx.provider.reload())))
     yield* bus.subscribe(Credential.Event.Switched).pipe(
