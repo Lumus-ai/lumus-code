@@ -13,19 +13,9 @@
   lumus-guest.py edit   <relative path> <content-file> [reason]   -> host must allow it
 """
 import json, os, sys, urllib.request, urllib.error
+from lumus_guest_transport import call, validate_base, save_state
 
 STATE = os.path.expanduser("~/.lumus-guest.json")
-
-def call(method, url, body=None, token=None):
-    req = urllib.request.Request(url, method=method, data=None if body is None else json.dumps(body).encode())
-    req.add_header("content-type", "application/json")
-    if token:
-        req.add_header("authorization", "Bearer " + token)
-    try:
-        with urllib.request.urlopen(req, timeout=120) as r:
-            return r.status, json.loads(r.read() or b"null")
-    except urllib.error.HTTPError as e:
-        return e.code, e.read().decode(errors="replace")
 
 def state():
     with open(STATE) as f:
@@ -54,18 +44,23 @@ def main(a):
         print(__doc__); sys.exit(2)
     cmd = a[0]
     if cmd == "join":
-        base, code = a[1].rstrip("/"), a[2]
+        base, code = validate_base(a[1]), a[2]
         name = a[3] if len(a) > 3 else "Instinct"
         st, data = call("POST", base + "/api/room/join", {"code": code, "name": name, "external": True})
         if st != 200:
             print(st, data); sys.exit(1)
-        d = data.get("data", data)
+        d = data.get("data", data) if isinstance(data, dict) else {}
+        if not isinstance(d, dict):
+            d = {}
         # field names are printed, not guessed: keep the whole reply except the token on screen
-        token = d.get("token") or d.get("guest", {}).get("token")
-        room = (d.get("room") or {}).get("id") or d.get("roomID")
-        with open(STATE, "w") as f:
-            json.dump({"base": base, "room": room, "token": token}, f)
-        os.chmod(STATE, 0o600)
+        guest = d.get("guest") if isinstance(d.get("guest"), dict) else {}
+        joined = d.get("room") if isinstance(d.get("room"), dict) else {}
+        token = d.get("token") or guest.get("token")
+        room = joined.get("id") or d.get("roomID")
+        if not isinstance(token, str) or not token or not isinstance(room, str) or not room:
+            print("ERROR: invalid join response; previous connection kept")
+            sys.exit(1)
+        save_state(STATE, {"base": base, "room": room, "token": token})
         print("joined room", room, "as", name, "(external); token saved to", STATE)
     elif cmd == "read":
         s = state()
@@ -117,4 +112,9 @@ def main(a):
     else:
         print(__doc__); sys.exit(2)
 
-main(sys.argv[1:])
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except (ValueError, OSError) as error:
+        print("ERROR:", str(error))
+        sys.exit(1)
