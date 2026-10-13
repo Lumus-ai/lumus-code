@@ -70,3 +70,50 @@ def save_state(filename, value):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def poll_messages(connection, payload, filename, mark_seen):
+    """Snapshot-scoped IDs, separated by endpoint and room. Peek never writes.
+
+    Legacy global IDs are ignored once: current addressed messages may repeat.
+    This is single-client snapshot deduplication, not a durable delivery/ack queue.
+    IDs removed from the snapshot can repeat if the server later returns them.
+    Concurrent poll processes should not share a cursor file.
+    """
+    import hashlib
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        raise ValueError("Invalid room message snapshot; cursor unchanged")
+    messages = payload["data"]
+    if len(messages) > 4096:
+        raise ValueError("Room snapshot exceeds 4096 messages; cursor unchanged")
+    if any(not isinstance(item, dict) or not isinstance(item.get("id"), str)
+           or not isinstance(item.get("text"), str) for item in messages):
+        raise ValueError("Invalid room message entry; cursor unchanged")
+    namespace = hashlib.sha256(json.dumps([validate_base(connection["base"]), connection["room"]]).encode()).hexdigest()
+    stored = {}
+    if os.path.exists(filename):
+        with open(filename) as source:
+            stored = json.load(source)
+    # Legacy global IDs have no room provenance; importing them would suppress another room.
+    if isinstance(stored, list):
+        stored = {}
+    if not isinstance(stored, dict) or any(not isinstance(key, str) or not isinstance(ids, list)
+           or any(not isinstance(item, str) for item in ids) for key, ids in stored.items()):
+        raise ValueError("Invalid room cursor file; repair it before polling")
+    seen = set(stored.get(namespace, []))
+    current = []
+    new = []
+    for item in messages:
+        if item.get("author") != "host" or item.get("role") != "user" or not item["text"].startswith("[host to @instinct]"):
+            continue
+        if item["id"] in current:
+            continue
+        current.append(item["id"])
+        if item["id"] not in seen:
+            new.append(item)
+    if mark_seen:
+        if namespace not in stored and len(stored) >= 128:
+            raise ValueError("Room cursor limit reached; archive the cursor file before joining another room")
+        stored[namespace] = current
+        save_state(filename, stored)
+    return new
