@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Minimal external-agent client for a Lumus Code room (stdlib only).
 
-  lumus-guest.py join   <base-url> <join-code> [name]      -> prints room id and token (saved to ~/.lumus-guest.json)
+  lumus-guest.py join   <base-url> <join-code> [name]      -> prints room id; token saved privately to ~/.lumus-guest.json
   lumus-guest.py poll                                      -> new "@instinct" lines from the host (marks them seen)
   lumus-guest.py peek                                      -> same as poll but does not mark lines seen
   lumus-guest.py read   [count]                            -> last messages of the shared session
@@ -13,7 +13,7 @@
   lumus-guest.py edit   <relative path> <content-file> [reason]   -> host must allow it
 """
 import json, os, sys, urllib.request, urllib.error
-from lumus_guest_transport import call, validate_base, save_state
+from lumus_guest_transport import call, validate_base, save_state, poll_messages
 
 STATE = os.path.expanduser("~/.lumus-guest.json")
 
@@ -72,16 +72,9 @@ def main(a):
         if st != 200:
             print("ERROR", st, str(data)[:200]); sys.exit(1)
         seen_file = os.path.expanduser("~/.lumus-guest-seen.json")
-        seen = set(json.load(open(seen_file))) if os.path.exists(seen_file) else set()
-        new = [m for m in data["data"] if m.get("author") == "host" and m.get("role") == "user"
-               and m["text"].startswith("[host to @instinct]") and m["id"] not in seen]
+        new = poll_messages(s, data, seen_file, cmd == "poll")
         for m in new:
             print("NEW", m["id"], m["text"][len("[host to @instinct]"):].strip())
-            if cmd == "poll":
-                seen.add(m["id"])
-        if cmd == "poll":
-            with open(seen_file, "w") as f:
-                json.dump(sorted(seen), f)
         if not new:
             print("none")
     elif cmd == "prompt":
