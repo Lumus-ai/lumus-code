@@ -42,10 +42,7 @@ const HueColorValue = Schema.Union([
 ])
 
 const HueScaleDefinition = Schema.Record(HueStep, HexColor)
-const HueValueDefinition = Schema.Union([
-  Schema.String.check(Schema.isPattern(/^\$hue\..+$/)),
-  HueScaleDefinition,
-])
+const HueValueDefinition = Schema.Union([Schema.String.check(Schema.isPattern(/^\$hue\..+$/)), HueScaleDefinition])
 type HueValueDefinition = Schema.Schema.Type<typeof HueValueDefinition>
 const HueRecord = Schema.Record(HueName, HueValueDefinition)
 const HueDefinition = HueRecord.check(
@@ -56,8 +53,7 @@ const HueDefinition = HueRecord.check(
     return missing.length ? `Missing required semantic hues: ${missing.join(", ")}` : undefined
   }),
 )
-export type HueDefinition = Schema.Schema.Type<typeof HueDefinition> &
-  Readonly<Record<SemanticHue, HueValueDefinition>>
+export type HueDefinition = Schema.Schema.Type<typeof HueDefinition> & Readonly<Record<SemanticHue, HueValueDefinition>>
 
 const StatefulColorDefinition = Schema.Struct({
   base: Schema.optional(ColorValue),
@@ -109,6 +105,7 @@ const TextDefinition = Schema.Struct({
     }),
   ),
   backend: Schema.optional(TextBackendDefinition),
+  decoration: Schema.optional(Schema.Struct({ star: Schema.optional(ColorValue) })),
 })
 export type TextDefinition = Schema.Schema.Type<typeof TextDefinition>
 
@@ -243,6 +240,7 @@ const CompleteThemeTokensDefinition = Schema.Struct({
     // Deliberately optional in the complete shape: requiring it would reject
     // every theme file written before the role existed.
     backend: Schema.optional(TextBackendDefinition),
+    decoration: Schema.optional(Schema.Struct({ star: Schema.optional(ColorValue) })),
   }),
   background: Schema.Struct({
     base: ColorValue,
