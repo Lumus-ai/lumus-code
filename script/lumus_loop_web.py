@@ -42,16 +42,34 @@ def clean_reply(text):
     if _ERRORS.match(t) and len(t) < 200: raise ValueError("the page showed an error instead of an answer: " + t.replace("\n", " ")[:80])
     return t
 
+def find_chrome():
+    """Chrome/Chromium (Edge as a last resort, it speaks the same debug protocol) on Linux, macOS and Windows."""
+    for n in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"):
+        if shutil.which(n): return shutil.which(n)
+    env = os.environ.get
+    cands = []
+    if sys.platform == "darwin":
+        cands = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium",
+                 "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"]
+    elif sys.platform == "win32":
+        for base in (env("PROGRAMFILES"), env("PROGRAMFILES(X86)"), env("LOCALAPPDATA")):
+            if base: cands += [os.path.join(base, "Google", "Chrome", "Application", "chrome.exe"), os.path.join(base, "Chromium", "Application", "chrome.exe"),
+                               os.path.join(base, "Microsoft", "Edge", "Application", "msedge.exe")]
+    for c in cands:
+        if os.path.isfile(c): return c
+    return None
+
 def chrome_command(port=9222, profile=None):
-    exe = shutil.which("google-chrome") or shutil.which("google-chrome-stable") or shutil.which("chromium") or shutil.which("chromium-browser")
-    if not exe: raise SystemExit("ERROR: Chrome/Chromium not found in PATH")
+    exe = find_chrome()
+    if not exe: raise SystemExit("ERROR: Chrome/Chromium not found (install Google Chrome)")
     profile = profile or os.path.expanduser("~/.lumus-loop-chrome")
     return [exe, "--remote-debugging-port=%d" % port, "--remote-debugging-address=127.0.0.1", "--user-data-dir=" + profile,
             "--no-first-run", "https://chatgpt.com/"]
 
 def start_chrome(port=9222):
     cmd = chrome_command(port)
-    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    kw = {"creationflags": 0x00000008 | 0x00000200} if sys.platform == "win32" else {"start_new_session": True}     # detached, survives this terminal
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kw)
     print("Chrome started with debug port 127.0.0.1:%d, profile %s.\nLog in (optional for ChatGPT guest mode, needed for Gemini) in that window once; keep it open." % (port, cmd[3].split("=", 1)[1]))
 
 def ask(adapter, prompt, chat_url=None, cdp=CDP_DEFAULT, timeout=300, settle=4.0):
