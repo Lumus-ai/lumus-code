@@ -16,6 +16,9 @@ KEYS="$HOME/.keys"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "ERROR: '$1' is required but not installed." >&2; exit 1; }; }
 need git
+if ! command -v python3 >/dev/null 2>&1; then
+  if [ "$(uname -s)" = "Darwin" ]; then echo "ERROR: python3 is required. On macOS: xcode-select --install  (or: brew install python), then run this again." >&2; exit 1; fi
+fi
 need python3
 
 echo "==> 1/4 code: $DIR"
@@ -61,6 +64,8 @@ chmod 755 "$BIN/lumus-demo"
 
 echo
 echo "Done."
-case ":$PATH:" in *":$BIN:"*) ;; *) echo "NOTE: $BIN is not in your PATH. Add it:  export PATH=\"\$HOME/.local/bin:\$PATH\"  (put the line in ~/.bashrc or ~/.zshrc)";; esac
+case ":$PATH:" in *":$BIN:"*) ;; *)
+  if [ "$(uname -s)" = "Darwin" ]; then RC="~/.zshrc"; else RC="~/.bashrc or ~/.zshrc"; fi
+  echo "NOTE: $BIN is not in your PATH. Add it:  export PATH=\"\$HOME/.local/bin:\$PATH\"  (put the line in $RC)";; esac
 echo "Start:   lumus-demo        (first launch asks: local chat page or terminal; the page walks you through connecting a free model, no keys in files by hand)"
 echo "Terminal power use: lumus-demo chrome (brain Chrome), lumus-demo init task.txt --test \"python3 -m unittest discover -s tests\", lumus-demo run"
