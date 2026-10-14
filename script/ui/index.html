@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Lumus loop</title>
 <style>
 :root{--bg:#07080f;--card:rgba(20,22,38,.72);--line:rgba(255,255,255,.09);--tx:#e8eaf6;--mut:#9aa0c0;--a:#7aa2ff;--b:#b388ff;--ok:#4ade80;--bad:#fb7185;--warn:#fbbf24;--r:16px}
@@ -53,39 +53,57 @@ dialog{background:#0d0f1e;color:var(--tx);border:1px solid var(--line);border-ra
 </style></head><body>
 <canvas id="stars" aria-hidden="true"></canvas>
 <div class="wrap">
-<header><div class="logo">Lumus loop<small>demo · brain + hands</small></div><div class="sp"></div>
-<span id="chipPhase" class="chip"><i></i><span>idle</span></span><span id="chipKey" class="chip"><i></i><span>hands key</span></span></header>
+<header><div class="logo">Lumus loop<small>демо · мозг + руки</small></div><div class="sp"></div>
+<span id="chipPhase" class="chip"><i></i><span>ожидание</span></span><span id="chipKey" class="chip"><i></i><span>ключ рук</span></span></header>
 <div class="grid">
 <div style="display:flex;flex-direction:column;gap:18px">
-<section class="card"><h2>✦ Task</h2>
-<label for="task">What should be built? (put your tests in the project folder)</label>
-<textarea id="task" placeholder="Build ledger.py with parse_amount… Tests are in tests/test_ledger.py and must pass."></textarea>
-<label for="test">Test command</label><input id="test" class="mono" value="python3 -m unittest discover -s tests">
-<div class="btns"><button class="pri" id="bInit">Create loop</button></div>
+<section class="card"><h2>✦ Задача</h2>
+<label for="task">Что нужно сделать? (тесты положи в папку проекта)</label>
+<textarea id="task" placeholder="Сделай ledger.py с функцией parse_amount… Тесты лежат в tests/test_ledger.py и должны проходить."></textarea>
+<label for="test">Команда тестов</label><input id="test" class="mono" value="python3 -m unittest discover -s tests">
+<div class="btns"><button class="pri" id="bInit">Создать цикл</button></div>
 <div id="initErr"></div></section>
-<section class="card"><h2>⚙ Settings</h2>
-<label for="dir">Project folder</label><input id="dir" class="mono" placeholder="/home/you/myproj">
-<div class="row"><div><label for="adapter">Brain (web chat)</label><select id="adapter"><option value="chatgpt">ChatGPT web</option><option value="gemini">Gemini web</option></select></div>
-<div><label for="rounds">Max rounds</label><input id="rounds" type="number" min="1" max="20" value="5"></div></div>
-<div class="sw"><input type="checkbox" id="manual"><label for="manual" style="margin:0">Manual brain mode (copy prompt, paste reply)</label></div>
-<div class="ro"><span>Hands</span><b id="hModel">–</b><span>Endpoint</span><b id="hUrl">–</b><span>API key</span><b id="hKey">–</b></div>
-<div class="hint">The key is read from its file by the loop and is never shown here.</div></section>
+<section class="card"><h2>⚙ Настройки</h2>
+<label for="dir">Папка проекта</label><input id="dir" class="mono" placeholder="/home/user/myproj">
+<div class="row"><div><label for="adapter">Мозг (веб-чат)</label><select id="adapter"><option value="chatgpt">ChatGPT (веб)</option><option value="gemini">Gemini (веб)</option></select></div>
+<div><label for="rounds">Макс. раундов</label><input id="rounds" type="number" min="1" max="20" value="5"></div></div>
+<div class="sw"><input type="checkbox" id="manual"><label for="manual" style="margin:0">Ручной режим мозга (скопировать запрос, вставить ответ)</label></div>
+<div class="ro"><span>Руки</span><b id="hModel">–</b><span>Адрес API</span><b id="hUrl">–</b><span>API-ключ</span><b id="hKey">–</b></div>
+<div class="hint">Ключ читается циклом из файла и здесь никогда не показывается.</div></section>
 </div>
 <div style="display:flex;flex-direction:column;gap:18px">
-<section class="card"><h2>◉ Live</h2>
-<div style="display:flex;gap:10px;flex-wrap:wrap"><span id="chipRound" class="chip"><i></i><span>round –</span></span><span id="chipResult" class="chip"><i></i><span>no result yet</span></span></div>
-<div class="btns"><button class="pri" id="bRun">Run loop</button><button id="bNext">Run next round</button><button class="dng" id="bStop">Stop</button><button id="bReport">Report</button></div>
+<section class="card"><h2>◉ Ход работы</h2>
+<div style="display:flex;gap:10px;flex-wrap:wrap"><span id="chipRound" class="chip"><i></i><span>раунд –</span></span><span id="chipResult" class="chip"><i></i><span>результата пока нет</span></span></div>
+<div class="btns"><button class="pri" id="bRun">Запустить цикл</button><button id="bNext">Следующий раунд</button><button class="dng" id="bStop">Стоп</button><button id="bReport">Отчёт</button></div>
 <div id="runErr"></div>
-<div id="manualBox" style="display:none;margin-top:14px"><div class="hint" style="margin:0 0 6px">Manual brain: copy the prompt, paste it into your chat, paste the full answer back.</div>
-<div class="btns" style="margin:0 0 8px"><button id="bCopy">Copy prompt</button></div>
-<textarea id="reply" class="mono" placeholder="PLAN … HANDS TASK … STATUS …"></textarea><div class="btns"><button class="pri" id="bReply">Submit reply</button></div><div id="replyErr"></div></div>
-<details style="margin-top:12px"><summary>Activity log</summary><div class="log" id="log"></div></details></section>
-<section class="card"><h2>⌁ Rounds</h2><div class="tl" id="rounds_list"><div class="empty">No rounds yet. Create the loop, then press Run.</div></div></section>
+<div id="manualBox" style="display:none;margin-top:14px"><div class="hint" style="margin:0 0 6px">Ручной режим: скопируй запрос, вставь его в свой чат и вставь сюда полный ответ.</div>
+<div class="btns" style="margin:0 0 8px"><button id="bCopy">Скопировать запрос</button></div>
+<textarea id="reply" class="mono" placeholder="PLAN … HANDS TASK … STATUS …"></textarea><div class="btns"><button class="pri" id="bReply">Отправить ответ</button></div><div id="replyErr"></div></div>
+<details style="margin-top:12px"><summary>Журнал действий</summary><div class="log" id="log"></div></details></section>
+<section class="card"><h2>⌁ Раунды</h2><div class="tl" id="rounds_list"><div class="empty">Раундов пока нет. Создай цикл и нажми «Запустить».</div></div></section>
 </div></div></div>
-<dialog id="dlg"><h2 style="margin-top:0">Report</h2><pre id="rep"></pre><div class="btns"><button id="dclose">Close</button></div></dialog>
+<dialog id="dlg"><h2 style="margin-top:0">Отчёт</h2><pre id="rep"></pre><div class="btns"><button id="dclose">Закрыть</button></div></dialog>
 <script>
 const $=s=>document.querySelector(s);
 const api=(p,b)=>fetch(p,b===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json","X-Lumus-UI":"1"},body:JSON.stringify(b)}).then(async r=>{const j=await r.json();if(!r.ok)throw new Error(j.error||r.status);return j});
+const PH={"need-brain":"ждём мозг","need-hands":"ждём руки","need-test":"ждём тесты"};
+const TR=[[/^PASSED in round (\d+)$/,"Тесты прошли в раунде $1"],[/^STOPPED: tests still failing after (\d+) rounds$/,"Остановлено: тесты всё ещё падают после $1 раундов"],
+[/^loop ready in (.*)$/,"цикл создан в $1"],[/^task and test command are required$/,"нужны задача и команда тестов"],[/^project folder does not exist: (.*)$/,"папки проекта нет: $1"],
+[/^a step is running$/,"сейчас выполняется шаг, подожди"],[/^forbidden$/,"запрещено"],[/^bad json$/,"неверный запрос"],[/^ERROR: no loop here; run init first$|^no loop here; run init first$/,"цикл ещё не создан"],
+[/^loop already finished: (.*)$/,"цикл уже завершён: $1"],[/^REJECTED: (.*?)(\n|$)[\s\S]*/,"Ответ отклонён: $1. Попроси мозг ответить в нужном формате (PLAN, HANDS TASK, STATUS)."],
+[/^round (\d+): asking the brain \((.*)\)…$/,"раунд $1: спрашиваем мозг ($2)…"],[/^round (\d+): hands are writing code…$/,"раунд $1: руки пишут код…"],[/^round (\d+): running tests…$/,"раунд $1: запускаем тесты…"],
+[/^hands wrote: (.*)$/,"руки записали файлы: $1"],[/^TEST PASS.*$/,"тесты прошли"],[/^TEST FAIL \(exit (\d+)\).*$/,"тесты упали (код $1), следующий раунд"],
+[/^brain reply accepted.*$/,"ответ мозга принят"],[/^stopped after the current step$/,"остановлено после текущего шага"],[/^stopped: (.*)$/,"остановлено: $1"],[/^error: (.*)$/,"ошибка: $1"],
+[/^ERROR: chat input not found.*$/,"Не найдено поле ввода чата (нет входа, капча или страница изменилась). Проверь окно Chrome или используй ручной режим."],
+[/^ERROR: cannot reach Chrome on (.*?) .*$/,"Chrome не отвечает на $1. Запусти: lumus-demo chrome"],
+[/^ERROR: no complete reply within (\d+)s.*$/,"За $1 с полный ответ не пришёл (лимит, капча или страница изменилась). Используй ручной режим."],
+[/^ERROR: prompt is (\d+) chars.*$/,"Запрос слишком длинный ($1 символов, предел 40000). Сократи задачу или файлы."],
+[/^ERROR: the page showed an error instead of an answer: (.*?);.*$/,"Страница вернула ошибку вместо ответа: $1. Повтори позже или используй ручной режим."],
+[/^ERROR: model API HTTP (\d+)$/,"API рук вернул ошибку HTTP $1 (проверь ключ, модель и лимиты)"],[/^ERROR: model API call failed.*$/,"Не удалось обратиться к API рук"],
+[/^hands returned no ### FILE blocks.*$/,"Руки не вернули ни одного файла (блоки ### FILE)"],[/^no brain reply waiting.*$/,"Нет ответа мозга для рук"],
+[/^Failed to fetch$/,"Нет связи с локальным сервером"]];
+const RS=[[/reply must contain the heading lines PLAN, HANDS TASK, STATUS.*/,"в ответе должны быть строки-заголовки PLAN, HANDS TASK, STATUS"],[/HANDS TASK is empty/,"раздел HANDS TASK пустой"],[/STATUS must be CONTINUE or DONE/,"в STATUS должно быть CONTINUE или DONE"]];
+function tr(m){m=String(m||"");if(/^REJECTED:/.test(m))for(const[r,t]of RS)m=m.replace(r,t);for(const[r,t]of TR){if(r.test(m))return m.replace(r,t)}return m}
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 let S=null,openSet=new Set(),lastSig="",touched=false;
 document.addEventListener("toggle",e=>{if(e.target.dataset&&e.target.dataset.k){e.target.open?openSet.add(e.target.dataset.k):openSet.delete(e.target.dataset.k)}},true);
@@ -94,29 +112,29 @@ function det(k,title,body,def){if(!body)return"";if(!openSet.has(k)&&def&&!openS
 function render(){
  if(!S)return;
  const ph=S.busy?"run":S.error?"bad":S.result?(/PASSED/.test(S.result)?"ok":"bad"):S.initialized?"warn":"";
- chip($("#chipPhase"),ph,S.busy?("working: "+S.busy):S.result?"finished":S.initialized?("phase: "+S.phase):"not created");
- chip($("#chipKey"),S.hands.key_set?"ok":"warn",S.hands.key_set?"hands key set":"hands key missing");
- $("#hModel").textContent=S.hands.model||"–";$("#hUrl").textContent=S.hands.url||"–";$("#hKey").textContent=S.hands.key_set?"set (hidden)":"not set";
+ chip($("#chipPhase"),ph,S.busy?("работаю: "+(S.busy==="run"?"цикл":"раунд")):S.result?"завершено":S.initialized?("этап: "+(PH[S.phase]||S.phase)):"цикл не создан");
+ chip($("#chipKey"),S.hands.key_set?"ok":"warn",S.hands.key_set?"ключ рук задан":"ключа рук нет");
+ $("#hModel").textContent=S.hands.model||"–";$("#hUrl").textContent=S.hands.url||"–";$("#hKey").textContent=S.hands.key_set?"задан (скрыт)":"не задан";
  if(!touched){if(S.dir)$("#dir").value=S.dir;$("#adapter").value=S.adapter;$("#manual").checked=S.manual;if(S.initialized){$("#test").value=S.test;$("#rounds").value=S.max_rounds;$("#task").value=S.task.trim()}}
- chip($("#chipRound"),"",S.initialized?("round "+S.round+" / "+S.max_rounds):"round –");
- chip($("#chipResult"),S.result?(/PASSED/.test(S.result)?"ok":"bad"):"",S.result||"no result yet");
+ chip($("#chipRound"),"",S.initialized?("раунд "+S.round+" / "+S.max_rounds):"раунд –");
+ chip($("#chipResult"),S.result?(/PASSED/.test(S.result)?"ok":"bad"):"",S.result?tr(S.result):"результата пока нет");
  $("#bRun").disabled=!S.initialized||!!S.busy||!!S.result;$("#bNext").disabled=$("#bRun").disabled;$("#bStop").disabled=!S.busy;$("#bReport").disabled=!S.result;
- $("#runErr").innerHTML=S.error?`<div class="err">${esc(S.error)}</div>`:"";
+ $("#runErr").innerHTML=S.error?`<div class="err">${esc(tr(S.error))}</div>`:"";
  const mb=S.initialized&&S.manual&&S.phase==="need-brain"&&!S.result;$("#manualBox").style.display=mb?"block":"none";
- $("#log").innerHTML=S.log.map(esc).join("<br>")||"–";
+ $("#log").innerHTML=S.log.map(l=>esc(tr(l))).join("<br>")||"–";
  const L=$("#rounds_list");
- if(!S.rounds||!S.rounds.length){L.innerHTML='<div class="empty">No rounds yet. Create the loop, then press Run.</div>';return}
+ if(!S.rounds||!S.rounds.length){L.innerHTML='<div class="empty">Раундов пока нет. Создай цикл и нажми «Запустить».</div>';return}
  L.innerHTML=S.rounds.slice().reverse().map(r=>{
   const waiting=r.exit==null&&r.n===S.round&&S.phase==="need-brain"&&!S.busy&&!S.result;
-  const st=waiting?'<span class="chip warn"><i></i>waiting for brain</span>':r.exit===0?'<span class="chip ok"><i></i>tests pass</span>':r.exit!=null?'<span class="chip bad"><i></i>tests fail</span>':'<span class="chip run"><i></i>in progress</span>';
+  const st=waiting?'<span class="chip warn"><i></i>ждём ответ мозга</span>':r.exit===0?'<span class="chip ok"><i></i>тесты прошли</span>':r.exit!=null?'<span class="chip bad"><i></i>тесты упали</span>':'<span class="chip run"><i></i>в процессе</span>';
   const k="r"+r.n+"-";
-  return `<div class="round"><div class="rh"><b>Round ${r.n}</b>${st}</div>`+
-   det(k+"p","Brain prompt",r.prompt)+det(k+"b","Brain reply",r.brain_reply)+det(k+"h","Hands task",r.hands_task)+
+  return `<div class="round"><div class="rh"><b>Раунд ${r.n}</b>${st}</div>`+
+   det(k+"p","Запрос мозгу",r.prompt)+det(k+"b","Ответ мозга",r.brain_reply)+det(k+"h","Задание рукам",r.hands_task)+
    (r.files.length?`<div class="files">${r.files.map(f=>`<span>${esc(f)}</span>`).join("")}</div>`:"")+
-   det(k+"t","Test output",r.test_output,true)+`</div>`}).join("");
+   det(k+"t","Вывод тестов",r.test_output,true)+`</div>`}).join("");
 }
 async function poll(){try{const j=await api("/api/state");const sig=JSON.stringify(j);if(sig!==lastSig){lastSig=sig;S=j;render()}}catch(e){}}
-async function act(p,b,errSel){try{S=await api(p,b);lastSig=JSON.stringify(S);$(errSel||"#runErr").innerHTML="";render()}catch(e){$(errSel||"#runErr").innerHTML=`<div class="err">${esc(e.message)}</div>`}}
+async function act(p,b,errSel){try{S=await api(p,b);lastSig=JSON.stringify(S);$(errSel||"#runErr").innerHTML="";render()}catch(e){$(errSel||"#runErr").innerHTML=`<div class="err">${esc(tr(e.message))}</div>`}}
 ["dir","adapter","rounds","test","task","manual"].forEach(id=>$("#"+id).addEventListener("input",()=>touched=true));
 $("#bInit").onclick=()=>act("/api/init",{task:$("#task").value,test:$("#test").value,dir:$("#dir").value,max_rounds:+$("#rounds").value,adapter:$("#adapter").value,manual:$("#manual").checked},"#initErr").then(()=>{touched=false});
 $("#bRun").onclick=()=>act("/api/run",{manual:$("#manual").checked,adapter:$("#adapter").value});
@@ -124,9 +142,9 @@ $("#bNext").onclick=()=>act("/api/round",{manual:$("#manual").checked,adapter:$(
 $("#bStop").onclick=()=>act("/api/stop",{});
 $("#manual").onchange=()=>api("/api/settings",{manual:$("#manual").checked}).then(j=>{S=j;render()});
 $("#adapter").onchange=()=>api("/api/settings",{adapter:$("#adapter").value});
-$("#bCopy").onclick=async()=>{try{const j=await api("/api/prompt");await navigator.clipboard.writeText(j.prompt);$("#bCopy").textContent="Copied ✓";setTimeout(()=>$("#bCopy").textContent="Copy prompt",1500)}catch(e){$("#replyErr").innerHTML=`<div class="err">${esc(e.message)}</div>`}};
+$("#bCopy").onclick=async()=>{try{const j=await api("/api/prompt");await navigator.clipboard.writeText(j.prompt);$("#bCopy").textContent="Скопировано ✓";setTimeout(()=>$("#bCopy").textContent="Скопировать запрос",1500)}catch(e){$("#replyErr").innerHTML=`<div class="err">${esc(tr(e.message))}</div>`}};
 $("#bReply").onclick=()=>act("/api/brain-reply",{text:$("#reply").value},"#replyErr").then(()=>{$("#reply").value=""});
-$("#bReport").onclick=()=>{$("#rep").textContent=S.report||"(no report yet)";$("#dlg").showModal()};$("#dclose").onclick=()=>$("#dlg").close();
+$("#bReport").onclick=()=>{$("#rep").textContent=S.report||"(отчёта пока нет)";$("#dlg").showModal()};$("#dclose").onclick=()=>$("#dlg").close();
 poll();setInterval(poll,1500);
 // stars
 (function(){const c=$("#stars"),x=c.getContext("2d");let W,H,st=[];const rm=matchMedia("(prefers-reduced-motion: reduce)").matches;
