@@ -50,8 +50,8 @@ case "\${1:-}" in
   --choose) set -- start --choose ;;
   update) exec git -C "\$DIR" pull --ff-only ;;
   run|step|hands)
-    if [ ! -s "\$LUMUS_HANDS_KEY_FILE" ]; then
-      echo "No hands key yet. Paste your Gemini API key into \$LUMUS_HANDS_KEY_FILE (nano \$LUMUS_HANDS_KEY_FILE), save, then run again." >&2
+    if [ ! -s "\$LUMUS_HANDS_KEY_FILE" ] && ! "\$VENV/bin/python" "\$DIR/script/lumus_providers.py" has-active; then
+      echo "No model for the hands yet. Run: lumus-demo ui  (the page walks you through it in a minute), or paste a Gemini key into \$LUMUS_HANDS_KEY_FILE." >&2
       exit 1
     fi ;;
 esac
@@ -62,8 +62,5 @@ chmod 755 "$BIN/lumus-demo"
 echo
 echo "Done."
 case ":$PATH:" in *":$BIN:"*) ;; *) echo "NOTE: $BIN is not in your PATH. Add it:  export PATH=\"\$HOME/.local/bin:\$PATH\"  (put the line in ~/.bashrc or ~/.zshrc)";; esac
-echo "1) Paste your own Gemini API key into $KEYS/hands.txt  (nano $KEYS/hands.txt)"
-echo "2) lumus-demo                                          # first launch asks: local chat page or terminal"
-echo "   lumus-demo chrome                                   # opens Chrome with a local debug port (ChatGPT works logged out)"
-echo "3) cd your-project && lumus-demo init task.txt --test \"python3 -m unittest discover -s tests\""
-echo "4) lumus-demo run"
+echo "Start:   lumus-demo        (first launch asks: local chat page or terminal; the page walks you through connecting a free model, no keys in files by hand)"
+echo "Terminal power use: lumus-demo chrome (brain Chrome), lumus-demo init task.txt --test \"python3 -m unittest discover -s tests\", lumus-demo run"
