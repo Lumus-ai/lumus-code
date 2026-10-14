@@ -14,7 +14,7 @@
   lumus-guest.py edit   <relative path> <content-file> [reason]   -> host must allow it
 """
 import json, os, sys, urllib.request, urllib.error
-from lumus_guest_transport import call, validate_base, save_state, poll_messages, diagnose
+from lumus_guest_transport import REQUEST_TIMEOUT, call, validate_base, save_state, poll_messages, diagnose
 
 STATE = os.path.expanduser("~/.lumus-guest.json")
 
@@ -36,8 +36,13 @@ def post(payload):
         print("REFUSED: looks destructive; ask the user in plain words first")
         sys.exit(3)
     s = state()
-    code, data = call("POST", f"{s['base']}/api/room/{s['room']}/guest/external", payload, s["token"])
+    # Host-approved kinds can wait on a human click, so give the socket longer than a plain message.
+    wait_for_host = 60 if payload.get("kind") in ("command", "edit", "prompt") else REQUEST_TIMEOUT
+    code, data = call("POST", f"{s['base']}/api/room/{s['room']}/guest/external", payload, s["token"], timeout=wait_for_host)
     print(code, json.dumps(data) if not isinstance(data, str) else data)
+    if code == 503:
+        # The host may still have run it; its output lands in the shared session, not in this reply.
+        print("RECOVER: do NOT resend. Check the room: `lumus-guest.py wait 120` then `lumus-guest.py read 6` shows the outcome if the host ran it.")
     sys.exit(0 if code == 200 else 1)
 
 def main(a):
