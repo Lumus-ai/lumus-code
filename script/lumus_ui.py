@@ -11,6 +11,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location("lumus_loop_core", os.path.join(HERE, "lumus-loop.py"))
 core = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(core)
 
+_pspec = importlib.util.spec_from_file_location("lumus_providers", os.path.join(HERE, "lumus_providers.py"))
+prov = importlib.util.module_from_spec(_pspec); _pspec.loader.exec_module(prov)
+
 ADAPTERS = ("chatgpt", "gemini") + (("stub",) if os.environ.get("LUMUS_UI_ALLOW_STUB") else ())   # stub = local test page, tests only
 CAP = 24000   # max chars of any one file sent to the page
 
@@ -108,11 +111,15 @@ def detect_tests(d):
     except OSError: pass
     return {"cmd": "", "note": ""}
 
+def hands_name():
+    d = prov.load(); a = d.get("active")
+    return d["providers"][a["id"]]["name"] if a and a.get("id") in d["providers"] else ""
+
 def snapshot(w):
     root = w.root
     base = {"dir": root, "adapter": w.adapter, "manual": w.manual, "busy": w.busy, "confirm": w.confirm, "allow_chat": w.allow_chat, "pending": w.pending, "error": w.error, "log": w.log[-40:],
-            "hands": {"url": os.environ.get("LUMUS_HANDS_URL", ""), "model": os.environ.get("LUMUS_HANDS_MODEL", ""),
-                      "key_set": bool(os.environ.get("LUMUS_HANDS_KEY_FILE") and os.path.isfile(os.environ["LUMUS_HANDS_KEY_FILE"]) and os.path.getsize(os.environ["LUMUS_HANDS_KEY_FILE"]) > 0)}}
+            "hands": {"url": os.environ.get("LUMUS_HANDS_URL", ""), "model": os.environ.get("LUMUS_HANDS_MODEL", ""), "provider": hands_name(),
+                      "key_set": bool(os.environ.get("LUMUS_HANDS_KEY_FILE") and os.path.isfile(os.environ["LUMUS_HANDS_KEY_FILE"]) and os.path.getsize(os.environ["LUMUS_HANDS_KEY_FILE"]) > 0) or not os.environ.get("LUMUS_HANDS_KEY_FILE") and bool(os.environ.get("LUMUS_HANDS_URL"))}}
     try: s = core.load(root)
     except SystemExit: base["initialized"] = False; return base
     base.update(initialized=True, round=s["round"], max_rounds=s["max_rounds"], phase=s["phase"], result=s["result"], test=s["test"],
@@ -160,6 +167,7 @@ class Handler(BaseHTTPRequestHandler):
                 s = core.load(w.root); text = core.brain_prompt_text(w.root, s)
                 core.write(os.path.join(core.rdir(w.root, s["round"]), "brain-prompt.md"), text); return self._send(200, {"prompt": text})
             except SystemExit as e: return self._send(400, {"error": str(e.code)})
+        if self.path.split("?")[0] == "/api/providers": return self._send(200, prov.public())
         return self._send(404, {"error": "not found"})
     def do_POST(self):
         if not self._ok_host() or self.headers.get("X-Lumus-UI") != "1": return self._send(403, {"error": "forbidden"})
@@ -194,6 +202,21 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/confirm":
             if not w.pending or data.get("decision") not in ("allow", "allow-chat", "deny"): return self._send(409, {"error": "nothing to confirm"})
             w.decision = data["decision"]; w.ev.set(); time.sleep(0.05); return self._send(200, snapshot(w))
+        if p.startswith("/api/providers/"):
+            try:
+                act = p.rsplit("/", 1)[1]; pid = str(data.get("id", ""))
+                if act == "connect": pid = prov.connect(pid, data.get("key"), data.get("name"), data.get("url"), data.get("model")); prov.apply_env(); return self._send(200, dict(prov.public(), id=pid))
+                if act == "setup":
+                    if w.running(): return self._send(409, {"error": "Сначала останови текущую работу"})
+                    r = prov.setup(pid, data.get("key"), core.chat, data.get("model") or None, data.get("name"), data.get("url")); return self._send(200, dict(r, **prov.public()))
+                if act == "disconnect": prov.disconnect(pid); prov.apply_env(); return self._send(200, prov.public())
+                if act == "models": return self._send(200, dict(prov.public(), count=len(prov.list_models(pid))))
+                if act == "select":
+                    if w.running(): return self._send(409, {"error": "Сначала останови текущую работу"})
+                    prov.select(pid, data.get("model")); return self._send(200, prov.public())
+                if act == "test": return self._send(200, {"ok": True, "reply": prov.test(pid, data.get("model"), core.chat)})
+            except ValueError as e: return self._send(400, {"error": str(e)})
+            return self._send(404, {"error": "not found"})
         if p == "/api/stop": w.stop_flag = True; w.ev.set(); return self._send(200, snapshot(w))
         if p == "/api/brain-reply":
             if w.running(): return self._send(409, {"error": "a step is running"})
@@ -205,6 +228,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "not found"})
 
 def serve(port=8787, root=".", open_browser=True):
+    prov.apply_env()   # a provider picked earlier in the UI wins over launcher defaults
     w = Worker(root); srv = ThreadingHTTPServer(("127.0.0.1", port), Handler); srv.worker = w
     url = "http://127.0.0.1:%d" % srv.server_address[1]
     print("Lumus UI on", url, "(Ctrl+C to stop). Project folder:", w.root, flush=True)
