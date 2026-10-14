@@ -290,7 +290,7 @@ TERMINAL_HELP = """Режим «Терминал». Команды (в папк�
 Сменить выбор: lumus-demo --choose   (страница: lumus-demo ui)"""
 
 def cmd_start(a):
-    cfg = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "lumus-demo", "mode")
+    cfg = os.path.join(os.environ.get("XDG_CONFIG_HOME") or (os.environ.get("APPDATA") if sys.platform == "win32" else None) or os.path.expanduser("~/.config"), "lumus-demo", "mode")
     mode = opt(a, "--mode", None)
     if mode not in (None, "ui", "terminal"): raise SystemExit("--mode must be ui or terminal")
     if not mode and "--choose" not in a: mode = read(cfg).strip() or None
