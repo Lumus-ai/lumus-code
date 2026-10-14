@@ -2,31 +2,34 @@
 > Works (tested): the file-based loop (brain prompt -> reply parsing -> free-model hands -> tests -> failures back to the brain, max 5 rounds);
 > a real ChatGPT guest brain + Gemini flash-lite hands run that failed 2 rounds and passed in round 3; unit tests and a stub-page Playwright test.
 > NOT tested: the Playwright auto-mode on the real ChatGPT / Gemini sites (the real-site page steps were driven by hand in a cloud browser),
-> signed-in ChatGPT, long sessions, usage-limit and captcha behaviour, Claude/DeepSeek adapters, any use inside the Lumus TUI.
+> install.sh on Arch/Archcraft (tested only with a fresh fake HOME on another Linux box), signed-in ChatGPT, long sessions, usage-limit and captcha behaviour, Claude/DeepSeek adapters, any use inside the Lumus TUI.
 > Details are in "Tested" below.
 
 # Lumus loop: web brain + free-model hands (experimental)
 
-Standalone tool, not wired into the TUI yet. Lives in script/ of the `demo` branch.
+Standalone tool (`lumus-demo`), not wired into the TUI yet. Lives in script/ of the `demo` branch.
 
 Idea: a strong model in a web chat (ChatGPT web is the default adapter, Gemini is the second one) is the **brain** and writes the plan. A weaker free
 model behind an OpenAI-compatible API is the **hands** and writes the code. Tests run automatically.
 If they fail, the failing output and the current files go back to the brain in the same chat. It stops
 when tests pass or after max rounds (default 5) and writes `.lumus-loop/report.md`.
 
-## Quick start (Linux, Chrome)
-    git clone -b demo https://github.com/Lumus-ai/lumus-code.git ~/lumus-code-demo
-    pip install --user playwright     # on Arch: sudo pacman -S python-playwright (no browser download needed)
-    python3 ~/lumus-code-demo/script/lumus-loop.py chrome   # opens Chrome with the debug port; ChatGPT works logged out
-    mkdir -p ~/.keys && nano ~/.keys/hands.txt               # paste your Gemini API key, save, then: chmod 600 ~/.keys/hands.txt
-    export LUMUS_HANDS_URL=https://generativelanguage.googleapis.com/v1beta/openai LUMUS_HANDS_MODEL=gemini-3.1-flash-lite LUMUS_HANDS_KEY_FILE=$HOME/.keys/hands.txt
-    mkdir ~/myproj && cd ~/myproj && nano task.txt           # describe the task, include the test file in the project
-    python3 ~/lumus-code-demo/script/lumus-loop.py init task.txt --test "python3 -m unittest discover -s tests"
-    python3 ~/lumus-code-demo/script/lumus-loop.py run       # chatgpt adapter is the default
+## Install (one command, Linux, needs git + python3 + Chrome)
+    curl -fsSL https://raw.githubusercontent.com/Lumus-ai/lumus-code/demo/install.sh | bash
+It clones this branch to ~/lumus-code-demo, makes a private venv with playwright, creates ~/.keys/hands.txt (empty, mode 600) and a
+`lumus-demo` launcher in ~/.local/bin (add it to PATH if the installer says so). No sudo, nothing deleted, no secrets. Update: `lumus-demo update`.
 
-## Setup (Linux)
+## Use
+    nano ~/.keys/hands.txt                 # paste your own Gemini API key once
+    lumus-demo chrome                      # Chrome with a local debug port; ChatGPT works logged out
+    cd ~/myproj                            # a folder with your tests (e.g. tests/) and a task.txt describing the task
+    lumus-demo init task.txt --test "python3 -m unittest discover -s tests"
+    lumus-demo run                         # chatgpt adapter is the default; add --adapter gemini for Gemini
+Other commands: `brain-prompt`, `brain-reply <file>`, `step`, `status`, `report`.
+
+## Manual setup (without the installer)
     pip install playwright            # attaches to your Chrome, no browser download
-    python3 script/lumus-loop.py chrome   # starts Chrome with a localhost-only debug port and a dedicated profile
+    lumus-demo chrome   # starts Chrome with a localhost-only debug port and a dedicated profile
     # ChatGPT works logged out (guest); for Gemini log in in that window once. Keep it open
     export LUMUS_HANDS_URL=https://generativelanguage.googleapis.com/v1beta/openai   # or https://openrouter.ai/api/v1
     export LUMUS_HANDS_MODEL=gemini-3.1-flash-lite                                   # or an openrouter/free model
@@ -34,13 +37,13 @@ when tests pass or after max rounds (default 5) and writes `.lumus-loop/report.m
 
 ## Use
     cd your-project
-    python3 /path/to/script/lumus-loop.py init task.txt --test "pytest -q" --max-rounds 5
-    python3 /path/to/script/lumus-loop.py run                      # default adapter chatgpt; add --adapter gemini for Gemini
+    lumus-demo init task.txt --test "pytest -q" --max-rounds 5
+    lumus-demo run                      # default adapter chatgpt; add --adapter gemini for Gemini
 
 ## Manual mode (no browser automation)
-    lumus-loop.py brain-prompt            # writes .lumus-loop/round-N/brain-prompt.md; paste it into any chat
-    lumus-loop.py brain-reply answer.md   # save the chat's answer to a file and feed it back
-    lumus-loop.py step                    # hands write the code, tests run
+    lumus-demo brain-prompt            # writes .lumus-loop/round-N/brain-prompt.md; paste it into any chat
+    lumus-demo brain-reply answer.md   # save the chat's answer to a file and feed it back
+    lumus-demo step                    # hands write the code, tests run
 Repeat until PASS or the round limit. The brain must answer with three heading lines: PLAN, HANDS TASK, STATUS
 (CONTINUE or DONE). A reply in another shape is rejected, nothing changes, ask the brain again.
 Optional fallback: `brain-api` with LUMUS_BRAIN_URL / LUMUS_BRAIN_MODEL / LUMUS_BRAIN_KEY_FILE.
