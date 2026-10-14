@@ -51,7 +51,7 @@ def md_load():
     except (OSError, ValueError): pass
     if data is None and url != "off":
         try:
-            with urllib.request.urlopen(url, timeout=12) as r: raw = r.read(40_000_000)
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "lumus-demo/1.0"}), timeout=12) as r: raw = r.read(40_000_000)
             data = json.loads(raw); src = "models.dev"
             _write600(path, raw.decode("utf-8"))
         except Exception: data = None
