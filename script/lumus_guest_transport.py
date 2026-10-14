@@ -1,6 +1,7 @@
 """External room transport. Redirects never carry room bearer credentials."""
 import ipaddress
 import json
+import math
 import os
 import tempfile
 import urllib.error
@@ -30,7 +31,16 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def call(method, url, body=None, token=None):
+REQUEST_TIMEOUT = 10
+
+
+def call(method, url, body=None, token=None, timeout=REQUEST_TIMEOUT):
+    """One attempt. Timeout limits socket operations, not total wall time/DNS.
+
+    A failed POST may have reached the host. Never retry it automatically.
+    """
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 < timeout <= 120:
+        raise ValueError("Room socket timeout must be between 0 and 120 seconds")
     # Validate transport even for loaded connection state, not just join.
     parsed = urllib.parse.urlsplit(url)
     validate_base(urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "", "", "")))
@@ -41,7 +51,7 @@ def call(method, url, body=None, token=None):
     if token:
         request.add_header("authorization", "Bearer " + token)
     try:
-        with urllib.request.build_opener(NoRedirect).open(request, timeout=120) as response:
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=timeout) as response:
             raw = response.read(2_000_001)
             if len(raw) > 2_000_000:
                 return 502, "Room response too large"
@@ -52,10 +62,19 @@ def call(method, url, body=None, token=None):
     except urllib.error.HTTPError as error:
         if 300 <= error.code < 400:
             return error.code, "Room redirect refused; use the final HTTPS room URL"
+        if error.code == 401:
+            return 401, "Room authentication failed; rejoin with a current host-provided join code"
+        if error.code == 403:
+            return 403, "Room access denied; ask the host to check guest permissions"
+        if error.code == 404:
+            return 404, "Room or endpoint not found; check the host URL and room availability"
         # Never print arbitrary response bodies: they can echo the bearer token.
         return error.code, "Room request failed (HTTP %s)" % error.code
     except (urllib.error.URLError, TimeoutError, OSError):
-        return 503, "Room connection failed; check the URL and host availability"
+        message = "Room connection failed or socket timed out; check the URL and host availability"
+        if method.upper() != "GET":
+            message += "; delivery unknown, check with the host before retrying"
+        return 503, message
 
 
 def save_state(filename, value):
@@ -81,14 +100,7 @@ def poll_messages(connection, payload, filename, mark_seen):
     Concurrent poll processes should not share a cursor file.
     """
     import hashlib
-    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
-        raise ValueError("Invalid room message snapshot; cursor unchanged")
-    messages = payload["data"]
-    if len(messages) > 4096:
-        raise ValueError("Room snapshot exceeds 4096 messages; cursor unchanged")
-    if any(not isinstance(item, dict) or not isinstance(item.get("id"), str)
-           or not isinstance(item.get("text"), str) for item in messages):
-        raise ValueError("Invalid room message entry; cursor unchanged")
+    messages = validate_snapshot(payload)
     namespace = hashlib.sha256(json.dumps([validate_base(connection["base"]), connection["room"]]).encode()).hexdigest()
     stored = {}
     if os.path.exists(filename):
@@ -117,3 +129,37 @@ def poll_messages(connection, payload, filename, mark_seen):
         stored[namespace] = current
         save_state(filename, stored)
     return new
+
+
+def diagnose(connection):
+    """Read-only authenticated probe. No messages, identifiers or credentials in output."""
+    if not isinstance(connection, dict) or any(not isinstance(connection.get(key), str) or not connection[key]
+                                               for key in ("base", "room", "token")):
+        return False, "Invalid saved connection; rejoin with a current host-provided join code"
+    try:
+        base = validate_base(connection["base"])
+        room = urllib.parse.quote(connection["room"], safe="")
+        code, payload = call("GET", base + "/api/room/" + room + "/guest/message", token=connection["token"])
+    except (ValueError, OSError):
+        return False, "Invalid saved connection; check the host URL and rejoin"
+    if code != 200:
+        return False, "HTTP %s: %s" % (code, payload)
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list) or not isinstance(payload.get("running"), bool):
+        return False, "Room returned an incompatible message snapshot; check host/client versions"
+    try:
+        validate_snapshot(payload)
+    except ValueError:
+        return False, "Room returned an incompatible message snapshot; check host/client versions"
+    return True, "Connected; host model is " + ("running" if payload["running"] else "idle")
+
+
+def validate_snapshot(payload):
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        raise ValueError("Invalid room message snapshot; cursor unchanged")
+    messages = payload["data"]
+    if len(messages) > 4096:
+        raise ValueError("Room snapshot exceeds 4096 messages; cursor unchanged")
+    if any(not isinstance(item, dict) or not isinstance(item.get("id"), str)
+           or not isinstance(item.get("text"), str) for item in messages):
+        raise ValueError("Invalid room message entry; cursor unchanged")
+    return messages
