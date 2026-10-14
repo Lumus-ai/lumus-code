@@ -39,6 +39,7 @@ export type ResolvedThemeTokens = {
     readonly feedback: Readonly<Record<FeedbackKind, { readonly base: RGBA; readonly muted: RGBA }>>
     // Optional so a theme written before this role existed keeps resolving; a
     // component that needs a backend color falls back to `text.muted`.
+    readonly decoration?: Readonly<{ star?: RGBA }>
     readonly backend?: Readonly<Record<TerminalBackend, RGBA>>
   }
   readonly background: {
