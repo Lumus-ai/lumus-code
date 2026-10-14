@@ -89,4 +89,28 @@ class HandsFlow(Base):
         with contextlib.redirect_stdout(io.StringIO()): loop.cmd_hands(d)
         self.assertTrue(os.path.exists(os.path.join(d, "calc.py")))
 
+class PickModels(Base):
+    MS = [{"id": i, "free": f} for i, f in [("lyria-3-clip-preview", True), ("gemini-2.5-flash-preview-tts", True), ("gemini-2.5-flash", None), ("gemini-3.1-flash-lite", None), ("gemini-3-flash-preview", None), ("gemini-embedding-001", None), ("veo-3.1", None)]]
+    def test_skips_non_chat_and_prefers_stable(self):
+        c = pv.pick_models(self.MS)
+        self.assertEqual(c[:2], ["gemini-2.5-flash", "gemini-3.1-flash-lite"]); self.assertEqual(c[-1], "gemini-3-flash-preview")
+        for bad in ("lyria", "tts", "embed", "veo"): self.assertFalse(any(bad in i for i in c))
+    def test_setup_tries_next_model_when_first_is_gone(self):
+        s, url, _ = server(200); self.servers.append(s); tried = []
+        def chat(u, model, kf, prompt, timeout=0):
+            tried.append(model)
+            if model == "gemini-2.5-flash": raise SystemExit("ERROR: model API HTTP 404")
+            return "ok"
+        old = pv.list_models; pv.list_models = lambda pid, timeout=25: self.MS
+        try: r = pv.setup("custom", "", chat, None, "T", url)
+        finally: pv.list_models = old
+        self.assertTrue(r["ok"]); self.assertEqual(r["model"], "gemini-3.1-flash-lite"); self.assertEqual(tried, ["gemini-2.5-flash", "gemini-3.1-flash-lite"])
+    def test_bad_key_stops_at_once(self):
+        s, url, _ = server(200); self.servers.append(s); tried = []
+        def chat(u, model, kf, prompt, timeout=0): tried.append(model); raise SystemExit("ERROR: model API HTTP 401")
+        old = pv.list_models; pv.list_models = lambda pid, timeout=25: self.MS
+        try: r = pv.setup("custom", "k", chat, None, "T", url)
+        finally: pv.list_models = old
+        self.assertFalse(r["ok"]); self.assertEqual(len(tried), 1)
+
 if __name__ == "__main__": unittest.main()
