@@ -229,16 +229,23 @@ def test(pid, model, chat):
         m = re.search(r"HTTP (\d+)", str(e.code)); raise ValueError(friendly(int(m.group(1)) if m else None))
     return (text or "").strip()[:80]
 
-def pick_model(models, current=""):
-    """Easiest sensible default: keep current, else first free model, else a 'flash/instruct/llama' one, else first."""
+NOT_CHAT = ("tts", "image", "embed", "lyria", "veo", "audio", "live", "transcribe", "imagen", "robotics", "computer-use", "deep-research", "antigravity", "aqa", "omni", "nano-banana", "vision", "moderation", "whisper", "rerank", "guard", "safeguard", "dall-e", "sora", "realtime")
+
+def pick_models(models, current=""):
+    """Candidate default models, best first: keep current, else free text-chat models (flash/instruct/llama...), never image/audio/music/embedding ones."""
     ids = [m["id"] for m in models]
-    if current and current in ids: return current
-    free = [m["id"] for m in models if m.get("free")]
-    pool = free or ids
+    if current and current in ids: return [current]
+    chat = [i for i in ids if not any(w in i.lower() for w in NOT_CHAT)]
+    free = [m["id"] for m in models if m.get("free") and m["id"] in chat]
+    pool = free or chat
+    pool = [i for i in pool if "preview" not in i.lower()] + [i for i in pool if "preview" in i.lower()]
+    out = []
     for kw in ("flash", "instruct", "llama", "gemma", "qwen"):
-        for i in pool:
-            if kw in i.lower() and "vision" not in i.lower() and "embed" not in i.lower(): return i
-    return pool[0] if pool else ""
+        out += [i for i in pool if kw in i.lower() and i not in out]
+    return out + [i for i in pool if i not in out]
+
+def pick_model(models, current=""):
+    c = pick_models(models, current); return c[0] if c else ""
 
 def setup(pid, key, chat, model=None, name=None, url=None):
     """One click: save key, find a model, test it, make it active. Returns {ok, id, model, reply|error}."""
@@ -254,11 +261,17 @@ def setup(pid, key, chat, model=None, name=None, url=None):
     if not models and p.get("md_id") and not model: models = md_models(p["md_id"])
     if not model and models and not any(x.get("free") is True for x in models) and all(x.get("free") is False for x in models):
         return fail("Ключ сохранён. У этого провайдера нет бесплатных моделей, поэтому сам выбирать не стал (платные тратят деньги). Открой «Модели» у провайдера и выбери модель сам.")
-    m = (model or "").strip() or pick_model(models, p.get("model", ""))
-    if not m: return fail(lerr or "Ключ сохранён, но модель выбрать не вышло. Открой «Настройки → Провайдеры» и вставь название модели.")
-    try: reply = test(pid, m, chat)
-    except ValueError as e: return dict(fail(str(e), str(e).startswith("Ключ")), model=m)
-    select(pid, m); res.update(ok=True, model=m, reply=reply); return res
+    cands = [model.strip()] if (model or "").strip() else pick_models(models, p.get("model", ""))
+    if not cands: return fail(lerr or "Ключ сохранён, но модель выбрать не вышло. Открой «Настройки → Провайдеры» и вставь название модели.")
+    err, m = None, cands[0]
+    for m in cands[:5]:      # a listed model can be retired or overloaded: try the next candidates before giving up (only for an automatic pick)
+        try: reply = test(pid, m, chat)
+        except ValueError as e:
+            err = e
+            if str(e).startswith("Ключ") or len(cands) == 1: break
+            continue
+        select(pid, m); res.update(ok=True, model=m, reply=reply); return res
+    return dict(fail(str(err), str(err).startswith("Ключ")), model=m)
 
 def detect_ollama(timeout=0.4):
     try:
