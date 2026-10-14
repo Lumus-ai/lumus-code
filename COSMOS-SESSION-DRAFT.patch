@@ -1,0 +1,50 @@
+diff --git a/packages/tui/src/routes/session/index.tsx b/packages/tui/src/routes/session/index.tsx
+index f507f61..9eb6cac 100644
+--- a/packages/tui/src/routes/session/index.tsx
++++ b/packages/tui/src/routes/session/index.tsx
+@@ -116,6 +116,7 @@ import { createDelayedPresence } from "../../util/delayed-presence"
+ import { SessionLocationMissing } from "./location-missing"
+ import { isRecord } from "../../util/record"
+ import { roomAuthor } from "../../util/room"
++import { CosmosRail } from "../../component/cosmos-rail"
+ import { RoomIndicator } from "../../component/room-indicator"
+ import { NoteChip, NoteQuickActions } from "../../component/note-canvas"
+ import { useNotes } from "../../context/notes"
+@@ -169,6 +170,7 @@ export function Session(props: {
+   const config = configState.data
+   const compactLayout = useCompactLayout()
+   const theme = useTheme()
++  const themes = useThemes()
+   const promptRef = usePromptRef()
+   const session = createMemo(() => data.session.get(route.sessionID))
+   const messages = () => data.session.message.list(route.sessionID)
+@@ -256,7 +258,13 @@ export function Session(props: {
+       !disabled(),
+     commands: [{ bind: "escape,ctrl+c", title: "Close sidebar", group: "Session", run: props.onToggleSidebar }],
+   }))
+-  const contentWidth = createMemo(() => (props.width ?? dimensions().width - props.verticalTabsWidth) - 4)
++  const cosmos = () =>
++    config.experimental?.cosmos === true &&
++    themes.selected === "gemini" &&
++    (props.width ?? dimensions().width - props.verticalTabsWidth) >= 60
++  const contentWidth = createMemo(
++    () => (props.width ?? dimensions().width - props.verticalTabsWidth) - 4 - (cosmos() ? 2 : 0),
++  )
+   const models = createMemo(() => data.location.model.list(location()) ?? [])
+ 
+   const scrollAcceleration = createMemo(() => getScrollAcceleration(config))
+@@ -1375,6 +1383,14 @@ export function Session(props: {
+       }}
+     >
+       <box flexDirection="row" flexGrow={1} minHeight={0}>
++        <Show when={cosmos()}>
++          <CosmosRail
++            enabled
++            color={theme.text.decoration?.star}
++            animations={config.animations !== false}
++            height={Math.max(0, dimensions().height - 8)}
++          />
++        </Show>
+         <box
+           flexGrow={1}
+           minHeight={0}
