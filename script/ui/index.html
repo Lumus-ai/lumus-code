@@ -219,6 +219,11 @@ details pre{max-height:260px;overflow:auto}
 .dbody input[type=text],.dbody input[type=number],.dbody select{width:100%;background:var(--card2);border:1px solid var(--line);color:var(--tx);border-radius:10px;padding:9px 12px;font:inherit}
 .dbody .fld{margin:10px 0}.dbody .fld label{display:block;font-size:12.5px;color:var(--mut);margin-bottom:4px}
 .dclose{margin-left:auto}
+.pcard{border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin:10px 0;background:var(--card2)}.pcard.on{border-color:#7aa2ff}
+.prow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px}.pu{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sh{font-size:12.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:20px 0 4px;font-weight:600}
+.pmsg{margin-top:6px;color:var(--bad);word-break:break-word}.pmsg.okm{color:#4ade80}
+.dbody input[type=password]{width:100%;background:var(--card2);border:1px solid var(--line);color:var(--tx);border-radius:10px;padding:9px 11px;font:inherit}
 .scrim{display:none}
 .rr>div:last-child{flex:1;min-width:0}
 @media(max-width:860px){
@@ -287,7 +292,7 @@ function barH(){
  const title=view==="new"||!S||!S.initialized?"Новый чат":(S.task||"").trim().split("\n")[0].slice(0,60)||"Чат";
  let st="";
  if(S&&S.initialized&&view!=="new"){st=S.busy?chipH("run","работаю: "+(PHASE[S.phase]||"")):S.pending?chipH("warn","ждёт тебя"):S.result?chipH(/PASSED/.test(S.result)?"ok":"bad","завершено"):S.manual&&S.phase==="need-brain"?chipH("warn","ждём ответ мозга"):chipH("",S.error?"остановлено":"пауза")}
- return `<div class="bar"><button class="ib menu" id="menu">☰</button><div class="ttl" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${esc(title)}</div><span class="chip hide-n"><i></i>Мозг: ${P.manual?"вручную":S&&S.adapter==="gemini"?"Gemini":"ChatGPT"}</span><span class="chip hide-n"><i></i>Руки: ${esc((S&&S.hands.model)||"–")}</span><span class="sp"></span>${st}<span class="chip ok hide-n"><i></i>на этом компьютере</span></div>`}
+ return `<div class="bar"><button class="ib menu" id="menu">☰</button><div class="ttl" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${esc(title)}</div><span class="chip hide-n"><i></i>Мозг: ${P.manual?"вручную":S&&S.adapter==="gemini"?"Gemini":"ChatGPT"}</span><span class="chip hide-n" id="chipHands" title="Сменить провайдера или модель"><i></i>Руки: ${esc((S&&S.hands.provider?S.hands.provider+" · ":"")+((S&&S.hands.model)||"–"))}</span><span class="sp"></span>${st}<span class="chip ok hide-n"><i></i>на этом компьютере</span></div>`}
 function compH(){
  const busy=S&&S.busy,cmd=P.cmd||D.cmd;
  return `<div class="comp"><div class="col" style="padding:0"><div class="cbox"><textarea class="cin" id="cin" rows="1" placeholder="${busy?"Идёт работа. Можно нажать «Стоп»":"Напиши, что сделать, или опиши задачу…"}"></textarea><div class="ctl"><button class="ib" id="addbtn" title="Папка и проверка">＋</button><button class="chip btnlike" id="tgManual">${P.manual?"Мозг вручную":"Авто: мозг + руки"}</button><button class="chip btnlike hide-n" id="tgConf">${P.confirm?"Подтверждать действия":"Без подтверждений"}</button><button class="chip btnlike hide-n" id="tgCmd">Проверка: ${cmd?esc(cmd.length>28?cmd.slice(0,27)+"…":cmd):"не задана"}</button>${busy?'<button class="send" id="stop" title="Стоп">■</button>':'<button class="send" id="send" title="Отправить">↑</button>'}</div></div><div class="note">Lumus Code работает на твоём компьютере (127.0.0.1). Проверяй важные изменения.</div></div></div>`}
@@ -326,17 +331,72 @@ function feedH(){
  if(fin)h+=aiH(pass?`<p><b>Готово:</b> ${esc(tr(S.result))}. Файлы лежат в <span class="mono">${esc(S.dir)}</span>.</p><div class="btns"><button class="btn pri sm" id="showRep">Показать отчёт</button></div>`:`<p><b>${esc(tr(S.result))}.</b> В отчёте видно, что осталось падать.</p><div class="btns"><button class="btn sm" id="showRep">Показать отчёт</button></div>`);
  else if(!S.busy&&!S.error&&!S.pending&&!(S.manual&&S.phase==="need-brain")&&S.phase)h+=aiH(`<p class="mut">Цикл на паузе.</p><div class="btns"><button class="btn pri sm" id="resume">Продолжить</button></div>`);
  return '<div class="feed" id="feed"><div class="col">'+h+'</div></div>'}
+
+
+let wiz=null,wizSkip=false;
+function wizOpen(){wiz={step:1,pid:null,busy:false,err:"",res:null};PV=null;api("/api/providers").then(j=>{PV=j;rmodal()}).catch(()=>{});modalOpen=true;rmodal()}
+function wizH(){
+ const W=wiz,cat=PV?PV.catalog.concat(PV.connected.map(c=>({id:c.id,name:c.name,hint:"уже подключён",needs_key:c.needs_key,model:c.model,key_url:""}))):[];
+ const cur=cat.find(c=>c.id===W.pid);
+ let b="";
+ if(W.step===1){
+  const ol=PV&&PV.ollama&&PV.ollama.found&&PV.catalog.find(c=>c.id==="ollama");
+  b=`<h2>Давай подключим модель</h2><div class="mut">Нужна одна бесплатная модель, она пишет код. Это займёт минуту, ничего устанавливать не надо.</div>`+(PV?cat.filter(c=>c.id!=="ollama"||ol).map(c=>`<div class="pcard wz" data-wz="${esc(c.id)}"><div class="prow"><b>${esc(c.name)}</b>${c.recommended?'<span class="pill h">Рекомендуем</span>':""}${c.id==="ollama"?'<span class="pill h">Найдена на этом компьютере</span>':""}<span class="mut small">${esc(c.hint)}</span><span style="margin-left:auto" class="mut">→</span></div></div>`).join(""):'<div class="mut" style="margin-top:12px">Ищу…</div>')+`<div class="prow" style="margin-top:14px"><button class="btn sm" data-wzclose="1">Позже</button></div>`;
+ }else if(W.step===2&&cur){
+  b=`<h2>${esc(cur.name)}</h2>`+(cur.needs_key?`<div class="mut">Шаг 1. Открой страницу, войди и создай бесплатный ключ.</div><div class="prow" style="margin:8px 0 14px"><a class="btn sm" href="${esc(cur.key_url||"#")}" target="_blank" rel="noopener noreferrer" style="text-decoration:none">Получить бесплатный ключ ↗</a></div><div class="mut">Шаг 2. Скопируй ключ и вставь сюда.</div><div class="fld"><input type="password" id="wzKey" autocomplete="off" placeholder="вставь ключ сюда"></div>`:`<div class="mut">Ключ не нужен. Лучше иметь хотя бы одну скачанную модель в Ollama.</div>`)+(W.err?`<div class="errc">${esc(W.err)}</div>`:"")+`<div class="prow" style="margin-top:12px"><button class="btn" data-wzgo="1" ${W.busy?"disabled":""}>${W.busy?"Проверяю…":"Подключить и проверить"}</button><button class="btn sm" data-wzback="1">Назад</button></div><div class="mut small" style="margin-top:10px">Ключ сохранится только в файле на этом компьютере (права 600) и никуда не отправляется, кроме самого провайдера.</div>`;
+ }else{
+  b=`<h2>Готово ✓</h2><div class="mut">Модель <b>${esc(W.res&&W.res.model)}</b> (${esc(W.res&&W.res.name)}) ответила и теперь пишет код. Менять можно в «Настройки → Провайдеры».</div><div class="prow" style="margin-top:14px"><button class="btn" data-wzclose="1">Начать работу</button></div>`;
+ }
+ return `<div class="modal" id="wizBg"><div class="dlg" style="grid-template-columns:1fr"><div class="dbody">${b}</div></div></div>`}
+async function wizGo(){
+ const W=wiz,k=$("#wzKey"),key=k?k.value:"";
+ if(PV&&PV.catalog.concat(PV.connected).find(c=>c.id===W.pid&&c.needs_key)&&!key.trim()){W.err="Вставь ключ в поле выше";rmodal();return}
+ W.busy=true;W.err="";rmodal();
+ try{const r=await api("/api/providers/setup",{id:W.pid,key});PV=r;if(r.ok){W.res=r;W.step=3;S=await api("/api/state");render()}else W.err=r.error}catch(e){W.err=tr(e.message)}
+ W.busy=false;rmodal()}
+let PV=null,pvOpen=null,pvDraft={},pvMsg={},pvFree=false;
+async function loadPV(){try{PV=await api("/api/providers");rmodal()}catch(e){toast(tr(e.message))}}
+function pvH(){
+ if(!PV)return'<h2>Провайдеры</h2><div class="mut">Загрузка…</div>';
+ const act=PV.active||{};
+ const tg=(on)=>`<div class="tog ${on?"on":""}" data-pvfree="1" style="cursor:pointer"></div>`;
+ const conn=PV.connected.map(p=>{
+  const on=act.id===p.id,ml=pvFree?p.models.filter(m=>m.free):p.models,mv=pvDraft[p.id]!==undefined?pvDraft[p.id]:p.model;
+  return `<div class="pcard ${on?"on":""}" data-pid="${esc(p.id)}"><div class="prow"><b>${esc(p.name)}</b>${on?'<span class="pill h">Активный</span>':""}${p.needs_key&&!p.key_set?'<span class="pill">нет ключа</span>':""}</div><div class="mut small mono pu">${esc(p.url)}</div>
+  <div class="fld"><label>Модель${p.models.length?" · в списке "+ml.length:""}</label><input type="text" list="dl-${esc(p.id)}" data-pm="${esc(p.id)}" value="${esc(mv)}" placeholder="название модели" autocomplete="off"><datalist id="dl-${esc(p.id)}">${ml.map(m=>`<option value="${esc(m.id)}">${m.free?"бесплатная":""}</option>`).join("")}</datalist></div>
+  <div class="prow"><button class="btn sm" data-pact="models">Загрузить модели</button><button class="btn sm" data-pact="test">Проверить</button><button class="btn sm" data-pact="select">${on?"Сохранить модель":"Сделать активным"}</button><button class="btn sm" data-pact="off">Отключить</button></div>
+  <div class="small pmsg ${(pvMsg[p.id]||"").startsWith("✓")?"okm":""}">${esc(pvMsg[p.id]||"")}</div></div>`}).join("")||'<div class="mut small">Пока ничего не подключено. Выбери провайдера ниже.</div>';
+ const cat=PV.catalog.map(c=>pvOpen===c.id?`<div class="pcard"><div class="prow"><b>${esc(c.name)}</b></div><div class="mut small">${esc(c.hint)}</div>${c.needs_key?`<div class="fld"><label>Ключ API (сохранится только в файл на этом компьютере)</label><input type="password" id="pk-${c.id}" autocomplete="off" placeholder="вставь ключ"></div>`:""}<div class="fld"><label>Модель (можно позже)</label><input type="text" id="pn-${c.id}" value="${esc(c.model)}" placeholder="название модели" autocomplete="off"></div><div class="prow"><button class="btn sm" data-pconn="${c.id}">Подключить</button><button class="btn sm" data-popen="">Отмена</button></div></div>`:`<div class="pcard"><div class="prow"><b>${esc(c.name)}</b><span class="mut small">${esc(c.hint)}</span><button class="btn sm" data-popen="${c.id}" style="margin-left:auto">Подключить</button></div></div>`).join("");
+ const cust=pvOpen==="custom"?`<div class="pcard"><div class="prow"><b>Свой провайдер</b></div><div class="mut small">Любой API в формате OpenAI (путь /chat/completions)</div><div class="fld"><label>Название</label><input type="text" id="pcn" placeholder="например, Мой сервер" autocomplete="off"></div><div class="fld"><label>Адрес API (до /chat/completions)</label><input type="text" id="pcu" class="mono" placeholder="https://example.com/v1" autocomplete="off"></div><div class="fld"><label>Ключ (если нужен)</label><input type="password" id="pck" autocomplete="off"></div><div class="fld"><label>Модель</label><input type="text" id="pcm" autocomplete="off"></div><div class="prow"><button class="btn sm" data-pconn="custom">Подключить</button><button class="btn sm" data-popen="">Отмена</button></div></div>`:`<div class="pcard"><div class="prow"><b>Свой провайдер</b><span class="mut small">Любой OpenAI-совместимый адрес</span><button class="btn sm" data-popen="custom" style="margin-left:auto">Добавить</button></div></div>`;
+ return `<h2>Провайдеры</h2><div class="prow"><button class="btn sm" data-wzopen="1">Мастер быстрого старта</button></div><div class="mut small" style="margin-top:8px">Это провайдеры для «рук» (пишут код). Только бесплатные модели: приложение не списывает деньги, но цену проверяет сам провайдер.</div><h3 class="sh">Подключено</h3>${conn}<div class="setr"><span>Показывать только бесплатные (если провайдер сообщает цену)</span>${tg(pvFree)}</div><h3 class="sh">Добавить</h3>${cat}${cust}`}
+async function pvConnect(id){
+ const v=x=>{const e=$(x);return e?e.value:""};
+ const body=id==="custom"?{id:"custom",name:v("#pcn"),url:v("#pcu"),key:v("#pck"),model:v("#pcm")}:{id,key:v("#pk-"+id),model:v("#pn-"+id)};
+ try{PV=await api("/api/providers/connect",body);pvOpen=null;toast("Подключено");S=await api("/api/state");render();rmodal()}catch(e){toast(tr(e.message))}
+}
+async function pvAct(a,id){
+ const mi=document.querySelector(`[data-pm="${id}"]`),model=mi?mi.value.trim():"";
+ const set=m=>{pvMsg[id]=m;rmodal()};
+ try{
+  if(a==="models"){set("Загружаю список…");PV=await api("/api/providers/models",{id});pvMsg[id]="✓ Моделей: "+PV.count;rmodal()}
+  if(a==="test"){set("Проверяю…");const r=await api("/api/providers/test",{id,model});set("✓ Ответ модели: "+r.reply)}
+  if(a==="select"){PV=await api("/api/providers/select",{id,model});delete pvDraft[id];pvMsg[id]="✓ Активный: "+model;S=await api("/api/state");render();rmodal()}
+  if(a==="off"){PV=await api("/api/providers/disconnect",{id});delete pvMsg[id];S=await api("/api/state");render();rmodal()}
+ }catch(e){set("Ошибка: "+tr(e.message))}
+}
 function modalH(){
  if(!modalOpen)return"";
+ if(wiz)return wizH();
  const th=[["dark","Космос","Тёмная, звёзды","background:linear-gradient(135deg,#0b0c1e,#1d1750)"],["light","Светлая","Мягкая, дневная","background:linear-gradient(135deg,#f4f6fc,#e3e9ff)"],["min","Минимал","Чёрно-белая","background:#fff"]];
  const cur=effTheme();
  const tg=(id,on)=>`<div class="tog ${on?"on":""}" data-tog="${id}" style="cursor:pointer"></div>`;
- const tabs=["Оформление","Мозг и руки","Проект","Безопасность"];
+ const tabs=["Оформление","Мозг и руки","Провайдеры","Проект","Безопасность"];
  let b="";
  if(tab===0)b=`<h2>Оформление</h2><div class="mut small">Тема запоминается в браузере. Можно «как в системе».</div><div class="themes">${th.map(([k,n,d,s])=>`<div class="tc ${cur===k?"on":""}" data-theme="${k}"><div class="pvw" style="${s}"><i></i><u></u><b></b></div><div><b>${n}</b><div class="mut small">${d}</div></div></div>`).join("")}</div><div class="setr"><span>Как в системе</span>${tg("sys",P.sys)}</div><div class="setr"><span>Плавные анимации</span>${tg("anim",P.anim)}</div>`;
- if(tab===1)b=`<h2>Мозг и руки</h2><div class="fld"><label>Мозг (сильная модель в веб-чате)</label><select id="fAd"><option value="chatgpt" ${P.adapter==="chatgpt"?"selected":""}>ChatGPT (без входа, как гость)</option><option value="gemini" ${P.adapter==="gemini"?"selected":""}>Gemini (нужен вход в Google в окне Chrome)</option></select></div><div class="setr"><span>Ручной режим (я сам вставляю ответ мозга)</span>${tg("manual",P.manual)}</div><div class="setr"><span>Руки</span><span class="mut">${esc((S&&S.hands.model)||"–")} · ${S&&S.hands.key_set?"ключ задан":"ключа нет"}</span></div><div class="mut small" style="margin-top:8px">Ключ рук лежит только в файле на этом компьютере и сюда не передаётся. Chrome для мозга: команда <span class="mono">lumus-demo chrome</span>.</div>`;
- if(tab===2)b=`<h2>Проект</h2><div class="fld"><label>Папка проекта</label><input type="text" id="fDir" value="${esc(P.dir||(S&&S.dir)||"")}"></div><div class="fld"><label>Команда проверки ${D.cmd?"(найдено автоматически: "+esc(D.note)+")":""}</label><input type="text" id="fCmd" class="mono" value="${esc(P.cmd||D.cmd)}" placeholder="python3 -m unittest discover -s tests"></div><div class="fld"><label>Максимум раундов (1–20)</label><input type="number" id="fRounds" min="1" max="20" value="${esc(P.rounds)}"></div>`;
- if(tab===3)b=`<h2>Безопасность</h2><div class="setr"><span>Подтверждать запуск команд</span>${tg("confirm",P.confirm)}</div><div class="mut small" style="margin-top:10px">Страница открыта только на 127.0.0.1 и отвечает только этому компьютеру. Руки пишут файлы только внутри папки проекта. Запуск команды проверки спрашивает подтверждение, пока включено.</div>`;
+ if(tab===1)b=`<h2>Мозг и руки</h2><div class="fld"><label>Мозг (сильная модель в веб-чате)</label><select id="fAd"><option value="chatgpt" ${P.adapter==="chatgpt"?"selected":""}>ChatGPT (без входа, как гость)</option><option value="gemini" ${P.adapter==="gemini"?"selected":""}>Gemini (нужен вход в Google в окне Chrome)</option></select></div><div class="setr"><span>Ручной режим (я сам вставляю ответ мозга)</span>${tg("manual",P.manual)}</div><div class="setr"><span>Руки</span><span class="mut">${esc(S&&S.hands.provider?S.hands.provider+" · ":"")}${esc((S&&S.hands.model)||"–")} · ${S&&S.hands.key_set?"ключ задан":"ключа нет"}</span></div><div class="setr"><span class="mut small">Провайдеров и модель рук меняют во вкладке «Провайдеры».</span><button class="btn sm" data-tab="2">Открыть</button></div><div class="mut small" style="margin-top:8px">Ключи лежат только в файлах на этом компьютере (права 600) и сюда не передаются. Chrome для мозга: команда <span class="mono">lumus-demo chrome</span>.</div>`;
+ if(tab===2)b=pvH();
+ if(tab===3)b=`<h2>Проект</h2><div class="fld"><label>Папка проекта</label><input type="text" id="fDir" value="${esc(P.dir||(S&&S.dir)||"")}"></div><div class="fld"><label>Команда проверки ${D.cmd?"(найдено автоматически: "+esc(D.note)+")":""}</label><input type="text" id="fCmd" class="mono" value="${esc(P.cmd||D.cmd)}" placeholder="python3 -m unittest discover -s tests"></div><div class="fld"><label>Максимум раундов (1–20)</label><input type="number" id="fRounds" min="1" max="20" value="${esc(P.rounds)}"></div>`;
+ if(tab===4)b=`<h2>Безопасность</h2><div class="setr"><span>Подтверждать запуск команд</span>${tg("confirm",P.confirm)}</div><div class="mut small" style="margin-top:10px">Страница открыта только на 127.0.0.1 и отвечает только этому компьютеру. Руки пишут файлы только внутри папки проекта. Запуск команды проверки спрашивает подтверждение, пока включено.</div>`;
  return `<div class="modal" id="modalBg"><div class="dlg"><div class="dnav">${tabs.map((t,i)=>`<div class="${tab===i?"on":""}" data-tab="${i}">${t}</div>`).join("")}<div style="margin-top:auto"><button class="btn sm" id="mclose" style="width:100%">Закрыть</button></div></div><div class="dbody">${b}</div></div></div>`}
 function render(keepIn){
  const cin=$("#cin"),val=cin?cin.value:"",foc=cin&&document.activeElement===cin;
@@ -346,7 +406,7 @@ function render(keepIn){
  $("#main").innerHTML=barH()+feedH()+compH();
  const f2=$("#feed");if(f2){f2.scrollTop=atEnd?f2.scrollHeight:sc}
  const c2=$("#cin");if(c2){c2.value=val;grow(c2);if(foc)c2.focus()}
- if(!modalOpen||!$("#modalBg"))$("#modal").innerHTML=modalH();
+ if(!modalOpen){if(!$("#repBg"))$("#modal").innerHTML=""}else if(!$("#modalBg")&&!$("#wizBg"))$("#modal").innerHTML=modalH();
  const s2=$("#srch");if(ae==="srch"&&s2){s2.focus();s2.setSelectionRange(q.length,q.length)}
 }
 function grow(t){t.style.height="auto";t.style.height=Math.min(t.scrollHeight,180)+"px"}
@@ -356,8 +416,9 @@ async function detect(){try{const d=await api("/api/detect"+(P.dir?"?dir="+encod
 async function startTask(text){
  text=text.trim();if(!text)return;
  if(S&&S.busy){toast("Сначала останови текущую работу");return}
+ if(S&&!S.hands.key_set&&!(S.hands.provider)){toast("Сначала подключим модель для рук");wizOpen();return}
  const cmd=(P.cmd||D.cmd||"").trim();
- if(!cmd){toast("Не задана команда проверки");modalOpen=true;tab=2;rmodal();return}
+ if(!cmd){toast("Не задана команда проверки");modalOpen=true;tab=3;rmodal();return}
  local=text;view="new";const _c=$("#cin");if(_c){_c.value="";grow(_c)}render();
  try{
   S=await api("/api/init",{task:text,test:cmd,dir:P.dir||(S&&S.dir)||".",max_rounds:+P.rounds||5,adapter:P.adapter,manual:P.manual,confirm:P.confirm});
@@ -366,10 +427,19 @@ async function startTask(text){
  }catch(e){local=null;view="auto";toast(tr(e.message));render()}
 }
 document.addEventListener("click",async e=>{
- const t=e.target.closest("[data-theme],[data-tog],[data-tab],[data-dec],[data-fill],[data-chat],button,.chip,.nb,.ci");if(!t)return;
+ const t=e.target.closest("[data-wzopen],[data-wz],[data-wzgo],[data-wzback],[data-wzclose],[data-popen],[data-pconn],[data-pact],[data-pvfree],[data-theme],[data-tog],[data-tab],[data-dec],[data-fill],[data-chat],button,.chip,.nb,.ci");if(!t)return;
  if(t.dataset.theme){P.theme=t.dataset.theme;P.sys=false;savep();applyTheme();render();rmodal();return}
  if(t.dataset.tog){const k=t.dataset.tog;P[k]=!P[k];savep();applyTheme();if(["manual","confirm"].includes(k))api("/api/settings",{manual:P.manual,confirm:P.confirm}).catch(()=>{});render();rmodal();return}
- if(t.dataset.tab!==undefined){tab=+t.dataset.tab;rmodal();return}
+ if(t.dataset.tab!==undefined){tab=+t.dataset.tab;if(tab===2)loadPV();rmodal();return}
+ if(t.dataset.wzopen){wizOpen();return}
+ if(t.dataset.wz){wiz.pid=t.dataset.wz;wiz.step=2;wiz.err="";rmodal();return}
+ if(t.dataset.wzgo){wizGo();return}
+ if(t.dataset.wzback){wiz.step=1;wiz.err="";rmodal();return}
+ if(t.dataset.wzclose){wiz=null;wizSkip=true;modalOpen=false;rmodal();return}
+ if(t.dataset.popen!==undefined){pvOpen=t.dataset.popen||null;rmodal();return}
+ if(t.dataset.pconn){pvConnect(t.dataset.pconn);return}
+ if(t.dataset.pact){pvAct(t.dataset.pact,t.closest("[data-pid]").dataset.pid);return}
+ if(t.dataset.pvfree!==undefined){pvFree=!pvFree;rmodal();return}
  if(t.dataset.dec){try{S=await api("/api/confirm",{decision:t.dataset.dec});render()}catch(er){toast(tr(er.message))}return}
  if(t.dataset.fill){$("#cin").value=t.dataset.fill;grow($("#cin"));$("#cin").focus();return}
  if(t.dataset.chat){view="new";render();$("#cin").value=t.dataset.chat;grow($("#cin"));$("#cin").focus();document.body.classList.remove("nav");return}
@@ -378,9 +448,10 @@ document.addEventListener("click",async e=>{
  if(id==="stop"){api("/api/stop",{}).then(j=>{S=j;render()});return}
  if(id==="newChat"){if(S&&S.busy){toast("Сначала останови текущую работу");return}view="new";local=null;render();document.body.classList.remove("nav");$("#cin").focus();return}
  if(id==="menu"){document.body.classList.add("nav");return}
- if(id==="openSet"||id==="addbtn"||id==="tgCmd"){modalOpen=true;tab=id==="openSet"?0:2;rmodal();document.body.classList.remove("nav");return}
+ if(id==="openSet"||id==="addbtn"||id==="tgCmd"){modalOpen=true;tab=id==="openSet"?0:3;rmodal();document.body.classList.remove("nav");return}
  if(id==="tgManual"){P.manual=!P.manual;savep();api("/api/settings",{manual:P.manual}).then(j=>{S=j;render()}).catch(()=>render());return}
  if(id==="tgConf"){P.confirm=!P.confirm;savep();api("/api/settings",{confirm:P.confirm}).then(j=>{S=j;render()}).catch(()=>render());return}
+ if(id==="chipHands"){modalOpen=true;tab=2;loadPV();rmodal();return}
  if(id==="mclose"){modalOpen=false;rmodal();return}
  if(id==="resume"){S=await api("/api/run",{manual:P.manual,adapter:P.adapter}).catch(er=>{toast(tr(er.message));return S});render();return}
  if(id==="showRep"){modalOpen=false;$("#modal").innerHTML=`<div class="modal" id="repBg"><div class="dlg" style="grid-template-columns:1fr"><div class="dbody"><h2>Отчёт</h2><pre style="max-height:60vh;overflow:auto">${esc(S.report||"(отчёта пока нет)")}</pre><div class="btns" style="margin-top:12px"><button class="btn sm" id="repClose">Закрыть</button></div></div></div></div>`;return}
@@ -388,8 +459,9 @@ document.addEventListener("click",async e=>{
  if(id==="cpPrompt"){try{const j=await api("/api/prompt");await navigator.clipboard.writeText(j.prompt);toast("Запрос скопирован")}catch(er){toast("Не удалось скопировать: "+tr(er.message))}return}
  if(id==="sendReply"){try{S=await api("/api/brain-reply",{text:$("#brainReply").value});render();S=await api("/api/run",{manual:P.manual,adapter:P.adapter});render()}catch(er){const x=$("#replyErr");if(x)x.innerHTML='<div class="errc">'+esc(tr(er.message))+"</div>"}return}
 });
-document.addEventListener("click",e=>{if(e.target.id==="modalBg"){modalOpen=false;rmodal()}if(e.target.id==="repBg")$("#modal").innerHTML="";if(e.target.id==="scrim")document.body.classList.remove("nav")});
+document.addEventListener("click",e=>{if(e.target.id==="modalBg"){modalOpen=false;rmodal()}if(e.target.id==="wizBg"){wiz=null;wizSkip=true;modalOpen=false;rmodal()}if(e.target.id==="repBg")$("#modal").innerHTML="";if(e.target.id==="scrim")document.body.classList.remove("nav")});
 document.addEventListener("input",e=>{
+ if(e.target.dataset&&e.target.dataset.pm)pvDraft[e.target.dataset.pm]=e.target.value;
  if(e.target.id==="cin")grow(e.target);
  if(e.target.id==="srch"){q=e.target.value;render()}
 });
@@ -402,12 +474,12 @@ document.addEventListener("change",e=>{
 });
 document.addEventListener("keydown",e=>{
  if(e.target.id==="cin"&&e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();startTask(e.target.value)}
- if(e.key==="Escape"){if(modalOpen){modalOpen=false;rmodal()}document.body.classList.remove("nav")}
+ if(e.key==="Escape"){if(modalOpen){wiz=null;wizSkip=true;modalOpen=false;rmodal()}document.body.classList.remove("nav")}
 });
 matchMedia("(prefers-color-scheme: light)").addEventListener("change",()=>{if(P.sys){applyTheme();render()}});
 (function(){const c=$("#stars"),x=c.getContext("2d");let W,H,st=[];const rm=matchMedia("(prefers-reduced-motion: reduce)").matches;
  function size(){W=c.width=innerWidth;H=c.height=innerHeight;st=Array.from({length:Math.round(W*H/9000)},()=>({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.3+.2,p:Math.random()*6.28,s:Math.random()*.6+.2}))}
  function draw(t){x.clearRect(0,0,W,H);if(document.body.classList.contains("t-dark")){for(const s of st){x.globalAlpha=(rm||!P.anim)?.6:.35+.5*Math.abs(Math.sin(t/1800*s.s+s.p));x.fillStyle="#cfd8ff";x.beginPath();x.arc(s.x,s.y,s.r,0,6.28);x.fill()}}if(!rm&&P.anim)requestAnimationFrame(draw);else setTimeout(()=>requestAnimationFrame(draw),1500)}
  addEventListener("resize",size);size();requestAnimationFrame(draw)})();
-applyTheme();render();poll().then(()=>{if(S&&!P.dir)P.dir=S.dir;detect()});setInterval(poll,1200);
+applyTheme();render();poll().then(()=>{if(S&&!P.dir)P.dir=S.dir;detect();if(S&&!S.hands.key_set&&!S.hands.provider&&!wizSkip)wizOpen()});setInterval(poll,1200);
 </script></body></html>
