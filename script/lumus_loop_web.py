@@ -1,0 +1,71 @@
+"""Web-chat brain bridge for lumus-loop (Playwright over CDP, localhost only).
+
+Caveats (also in README-LOOP.md): site selectors can break when the page changes, captchas / usage
+limits / login prompts need you; automating a consumer chat UI may be against that service's terms;
+the debug port is bound to 127.0.0.1 only and gives full control of that Chrome profile, so close it
+when not in use and use a dedicated profile (default ~/.lumus-loop-chrome), not your everyday one.
+"""
+import os, shutil, subprocess, sys, time
+
+CDP_DEFAULT = "http://127.0.0.1:9222"
+# One entry per service. Add ChatGPT / Claude / DeepSeek here later; selectors are the fragile part.
+ADAPTERS = {
+    "gemini": {
+        "new_chat": "https://gemini.google.com/app",
+        "input": 'rich-textarea div[contenteditable="true"], div.ql-editor[contenteditable="true"]',
+        "send": 'button[aria-label*="Send" i], button.send-button',
+        "stop": 'button[aria-label*="Stop" i]',
+        "reply": "message-content, .model-response-text",
+    },
+    "stub": {  # local test page, see tests
+        "new_chat": os.environ.get("LUMUS_STUB_URL", "http://127.0.0.1:8765/"),
+        "input": "#in", "send": "#send", "stop": "#stop-never", "reply": ".reply",
+    },
+}
+
+def chrome_command(port=9222, profile=None):
+    exe = shutil.which("google-chrome") or shutil.which("google-chrome-stable") or shutil.which("chromium") or shutil.which("chromium-browser")
+    if not exe: raise SystemExit("ERROR: Chrome/Chromium not found in PATH")
+    profile = profile or os.path.expanduser("~/.lumus-loop-chrome")
+    return [exe, "--remote-debugging-port=%d" % port, "--remote-debugging-address=127.0.0.1", "--user-data-dir=" + profile,
+            "--no-first-run", "https://gemini.google.com/app"]
+
+def start_chrome(port=9222):
+    cmd = chrome_command(port)
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    print("Chrome started with debug port 127.0.0.1:%d, profile %s.\nLog in to Gemini in that window once; keep it open." % (port, cmd[3].split("=", 1)[1]))
+
+def ask(adapter, prompt, chat_url=None, cdp=CDP_DEFAULT, timeout=300, settle=4.0):
+    """Send prompt in the task's chat (new chat if chat_url is None). Returns (reply_text, chat_url)."""
+    if not (cdp.startswith("http://127.0.0.1:") or cdp.startswith("http://localhost:")):
+        raise SystemExit("ERROR: CDP endpoint must be localhost")
+    sel = ADAPTERS[adapter]
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise SystemExit("ERROR: pip install playwright (no browser download needed; it attaches to your Chrome)")
+    with sync_playwright() as p:
+        try: browser = p.chromium.connect_over_cdp(cdp)
+        except Exception as e: raise SystemExit("ERROR: cannot reach Chrome on %s (%s); run: lumus-loop.py chrome" % (cdp, type(e).__name__))
+        ctx = browser.contexts[0]
+        page = ctx.new_page()
+        try:
+            page.goto(chat_url or sel["new_chat"], wait_until="domcontentloaded")
+            box = page.locator(sel["input"]).first
+            try: box.wait_for(state="visible", timeout=30000)
+            except Exception: raise SystemExit("ERROR: chat input not found (not logged in, captcha, or the page changed); check the window")
+            before = page.locator(sel["reply"]).count()
+            box.click(); box.fill(prompt)
+            page.locator(sel["send"]).first.click()
+            end = time.time() + timeout; last = ""; stable_since = time.time()
+            while time.time() < end:
+                time.sleep(1)
+                n = page.locator(sel["reply"]).count()
+                text = page.locator(sel["reply"]).nth(n - 1).inner_text() if n > before else ""
+                generating = page.locator(sel["stop"]).count() > 0
+                if text != last: last, stable_since = text, time.time()
+                elif text and not generating and time.time() - stable_since >= settle:
+                    return text, page.url
+            raise SystemExit("ERROR: no complete reply within %ds (limit, captcha or changed page); use manual mode" % timeout)
+        finally:
+            page.close()
