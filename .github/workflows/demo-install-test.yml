@@ -1,0 +1,82 @@
+# Checks that the one-command installers really work on Linux, macOS and Windows runners (demo branch only).
+name: demo-install-test
+on:
+  push:
+    branches: [demo]
+    paths: ["install.sh", "install.ps1", "script/**", ".github/workflows/demo-install-test.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: demo }
+      - name: install (real installer, clones the public demo branch)
+        run: bash install.sh
+      - name: update path
+        run: ~/.local/bin/lumus-demo update
+      - name: page starts, serves, saves a provider with Cyrillic name
+        env:
+          LUMUS_MODELS_DEV_URL: "off"
+        run: |
+          mkdir -p "$RUNNER_TEMP/proj"
+          ~/.local/bin/lumus-demo ui --no-open --port 8799 --dir "$RUNNER_TEMP/proj" > "$RUNNER_TEMP/ui.log" 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8799/api/state >/dev/null 2>&1 && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8799/api/state | python3 -c "import sys,json; d=json.load(sys.stdin); print('state ok, dir', bool(d['dir']))"
+          curl -fsS http://127.0.0.1:8799/ | grep -q "Lumus Code" && echo "page ok"
+          curl -fsS -X POST -H "X-Lumus-UI: 1" -H "Content-Type: application/json" -d '{"id":"custom","name":"Тест","url":"http://127.0.0.1:9/v1","key":"k-ci","model":"m"}' http://127.0.0.1:8799/api/providers/connect | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['connected'][0]['name']=='Тест', d; print('provider saved, Cyrillic ok')"
+          kill %1 || true
+      - name: unit tests (informational)
+        continue-on-error: true
+        env:
+          LUMUS_MODELS_DEV_URL: "off"
+        run: |
+          python3 -m venv "$RUNNER_TEMP/t" && cd script && "$RUNNER_TEMP/t/bin/python" -m unittest test_lumus_providers test_lumus_hands test_lumus_loop test_lumus_ui test_lumus_ui_chat
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: demo }
+      - name: install (real installer, clones the public demo branch)
+        shell: powershell
+        run: ./install.ps1
+      - name: update path
+        shell: cmd
+        run: '%USERPROFILE%\.local\bin\lumus-demo.cmd update'
+      - name: page starts, serves, saves a provider with Cyrillic name
+        shell: powershell
+        env:
+          LUMUS_MODELS_DEV_URL: "off"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $proj = Join-Path $env:RUNNER_TEMP "proj"; New-Item -ItemType Directory -Force -Path $proj | Out-Null
+          $p = Start-Process -FilePath "$env:USERPROFILE\.local\bin\lumus-demo.cmd" -ArgumentList "ui","--no-open","--port","8799","--dir",$proj -PassThru -WindowStyle Hidden
+          $ok = $false
+          for ($i = 0; $i -lt 40; $i++) { try { $s = Invoke-RestMethod http://127.0.0.1:8799/api/state; $ok = $true; break } catch { Start-Sleep 1 } }
+          if (-not $ok) { throw "page did not start" }
+          "state ok"
+          $html = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8799/).Content
+          if ($html -notmatch "Lumus Code") { throw "page content missing" }
+          "page ok"
+          $body = [Text.Encoding]::UTF8.GetBytes('{"id":"custom","name":"Тест","url":"http://127.0.0.1:9/v1","key":"k-ci","model":"m"}')
+          $r = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8799/api/providers/connect -Headers @{ "X-Lumus-UI" = "1" } -ContentType "application/json; charset=utf-8" -Body $body
+          $name = $r.connected[0].name
+          if ($name -ne ([string][char]0x0422 + [char]0x0435 + [char]0x0441 + [char]0x0442)) { throw "Cyrillic name broke: $name" }
+          "provider saved, Cyrillic ok"
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+      - name: unit tests (informational)
+        continue-on-error: true
+        shell: cmd
+        env:
+          LUMUS_MODELS_DEV_URL: "off"
+          PYTHONUTF8: "1"
+        run: |
+          python -m venv %RUNNER_TEMP%\t
+          cd script
+          %RUNNER_TEMP%\t\Scripts\python.exe -m unittest test_lumus_providers test_lumus_hands test_lumus_loop test_lumus_ui test_lumus_ui_chat
