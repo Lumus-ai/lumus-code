@@ -3,16 +3,22 @@ import os
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
+import urllib.error
+from pathlib import Path
+import time
 import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from lumus_guest_transport import call, save_state, validate_base, poll_messages
+from lumus_guest_transport import call, save_state, validate_base, poll_messages, diagnose
 
 
 class TransportTests(unittest.TestCase):
     def setUp(self):
         self.requests = []
         self.invalid_join = True
+        self.room_status = 200
+        self.room_payload = {"data": [{"id": "same", "text": "[host to @instinct] hello", "author": "host", "role": "user"}], "running": False}
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -32,7 +38,9 @@ class TransportTests(unittest.TestCase):
                     self.send_header("Location", owner.base + "/target")
                     self.end_headers()
                     return
-                self.send_response(401 if self.path == "/denied" else 200)
+                if self.path == "/slow":
+                    time.sleep(0.15)
+                self.send_response(owner.room_status if self.path.startswith("/api/room/") else (401 if self.path == "/denied" else 200))
                 self.end_headers()
                 payload = b"fixture-only" if self.path == "/denied" else b"{}"
                 if self.path == "/bad":
@@ -40,8 +48,11 @@ class TransportTests(unittest.TestCase):
                 if self.path == "/large":
                     payload = b"x" * 2_000_001
                 if self.path.startswith("/api/room/"):
-                    payload = json.dumps({"data": [{"id": "same", "text": "[host to @instinct] hello", "author": "host", "role": "user"}]}).encode()
-                self.wfile.write(payload)
+                    payload = json.dumps(owner.room_payload).encode()
+                try:
+                    self.wfile.write(payload)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.base = "http://127.0.0.1:%s" % self.server.server_port
@@ -52,6 +63,76 @@ class TransportTests(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.worker.join()
+
+    def test_default_and_explicit_socket_timeout(self):
+        with patch("lumus_guest_transport.urllib.request.build_opener") as build:
+            build.return_value.open.side_effect = urllib.error.URLError("fixture-secret")
+            self.assertEqual(call("GET", self.base)[0], 503)
+            self.assertEqual(build.return_value.open.call_args.kwargs["timeout"], 10)
+            call("GET", self.base, timeout=0.25)
+            self.assertEqual(build.return_value.open.call_args.kwargs["timeout"], 0.25)
+        for value in (0, -1, 121, True, float("nan"), float("inf"), "10"):
+            with self.assertRaises(ValueError):
+                call("GET", self.base, timeout=value)
+
+    def test_socket_timeout_on_slow_local_server(self):
+        code, message = call("GET", self.base + "/slow", timeout=0.03)
+        self.assertEqual(code, 503)
+        self.assertIn("timed out", message)
+
+    def test_failed_post_is_never_retried(self):
+        with patch("lumus_guest_transport.urllib.request.build_opener") as build:
+            build.return_value.open.side_effect = TimeoutError("fixture-secret")
+            code, message = call("POST", self.base, {"text": "fixture-secret"}, "fixture-secret")
+            self.assertEqual(code, 503)
+            self.assertIn("delivery unknown", message)
+            self.assertNotIn("fixture-secret", message)
+            self.assertEqual(build.return_value.open.call_count, 1)
+
+    def test_doctor_read_only_and_private(self):
+        for running in (False, True):
+            self.room_payload["running"] = running
+            with tempfile.TemporaryDirectory() as folder:
+                state = os.path.join(folder, ".lumus-guest.json")
+                seen = os.path.join(folder, ".lumus-guest-seen.json")
+                save_state(state, {"base": self.base, "room": "private-room", "token": "fixture-only"})
+                save_state(seen, {"private-cursor": ["same"]})
+                before = [Path(p).read_bytes() for p in (state, seen)]
+                result = subprocess.run([sys.executable, "lumus-guest.py", "doctor"], env={**os.environ, "HOME": folder}, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("running" if running else "idle", result.stdout)
+                for private in (self.base, "private-room", "fixture-only", "hello", "same"):
+                    self.assertNotIn(private, result.stdout + result.stderr)
+                self.assertEqual(before, [Path(p).read_bytes() for p in (state, seen)])
+        self.assertEqual(len(self.requests), 2)
+        self.assertTrue(all(path.endswith("/guest/message") for path, _ in self.requests))
+
+    def test_doctor_status_and_schema(self):
+        connection = {"base": self.base, "room": "private-room", "token": "fixture-only"}
+        for code, hint in ((401, "rejoin"), (403, "permissions"), (404, "availability")):
+            self.room_status = code
+            ok, message = diagnose(connection)
+            self.assertFalse(ok)
+            self.assertIn(hint, message)
+            self.assertNotIn("fixture-only", message)
+        self.room_status = 200
+        for payload in (None, {}, {"data": [], "running": "false"}, {"data": {}, "running": False}, {"data": [None], "running": False}, {"data": [], "running": 1}):
+            self.room_payload = payload
+            self.assertEqual(diagnose(connection)[0], False)
+        self.assertFalse(diagnose({})[0])
+        self.assertFalse(diagnose({**connection, "base": "http://example.com"})[0])
+
+    def test_doctor_missing_or_corrupt_state(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for contents in (None, "fixture-private-not-json"):
+                if contents:
+                    with open(os.path.join(folder, ".lumus-guest.json"), "w") as target:
+                        target.write(contents)
+                result = subprocess.run([sys.executable, "lumus-guest.py", "doctor"], env={**os.environ, "HOME": folder}, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("join a room first", result.stdout)
+                self.assertNotIn("fixture-private", result.stdout + result.stderr)
+        self.assertEqual(self.requests, [])
 
     def test_authenticated_request(self):
         self.assertEqual(call("GET", self.base + "/ok", token="fixture-only"), (200, {}))
