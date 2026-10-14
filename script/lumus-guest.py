@@ -75,8 +75,20 @@ def main(a):
     elif cmd == "read":
         s = state()
         st, data = call("GET", f"{s['base']}/api/room/{s['room']}/guest/message", None, s["token"])
-        print(st, json.dumps(data)[-int(a[1]) if len(a) > 1 else -4000:])
-        sys.exit(0 if st == 200 else 1)
+        if st != 200:
+            print(st, str(data)[:200]); sys.exit(1)
+        messages = data.get("data", []) if isinstance(data, dict) else []
+        if not isinstance(messages, list):
+            messages = []
+        if len(a) > 1:
+            # count is a number of messages, not characters
+            try:
+                count = max(1, int(a[1]))
+            except ValueError:
+                print("ERROR: count must be a number of messages"); sys.exit(2)
+            messages = messages[-count:]
+        print(json.dumps(messages, indent=1))
+        sys.exit(0)
     elif cmd in ("poll", "peek"):
         s = state()
         st, data = call("GET", f"{s['base']}/api/room/{s['room']}/guest/message", None, s["token"])
