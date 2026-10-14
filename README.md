@@ -1,5 +1,7 @@
 > EXPERIMENTAL DRAFT: This branch contains unfinished Cosmos session integration.
 > Not fully verified. Full TUI typecheck did not complete within bounded runs.
+> Session wiring is supplied as unapplied COSMOS-SESSION-DRAFT.patch, not active source.
+> Apply with git apply COSMOS-SESSION-DRAFT.patch for development only.
 > Not merged into main. Default off; use Experiments > Cosmos session draft only for development.
 > Requires Gemini theme and pane width >=60. Animations off gives a static rail.
 > Component fixture/scoped typecheck passed, not a complete session/permission-layout check.
