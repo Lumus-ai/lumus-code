@@ -22,21 +22,32 @@ class Worker:
     def __init__(self, root):
         self.root = os.path.abspath(root); self.lock = threading.Lock(); self.thread = None
         self.stop_flag = False; self.log = []; self.error = None; self.busy = None; self.manual = False; self.adapter = "chatgpt"
-        self.confirm = False; self.allow_chat = False; self.pending = None; self.decision = None; self.ev = threading.Event()
+        self.confirm = False; self.allow_chat = False; self.allow_files = False; self.pending = None; self.decision = None; self.ev = threading.Event()
     def say(self, msg):
         self.log.append("%s  %s" % (time.strftime("%H:%M:%S"), msg)); self.log = self.log[-200:]
     def running(self): return self.busy is not None
 
-    def ask_confirm(self, s):
-        """Pauses before running the user's test command until the page answers (allow / allow-chat / deny) or Stop is pressed."""
-        self.decision = None; self.ev.clear()
-        self.pending = {"kind": "test", "cmd": s["test"], "cwd": self.root, "round": s["round"]}; self.say("waiting for your confirmation")
+    def _wait_decision(self, pending):
+        self.decision = None; self.ev.clear(); self.pending = pending; self.say("waiting for your confirmation")
         while not self.stop_flag and not self.ev.wait(0.2): pass
         d = self.decision; self.pending = None
+        return d
+
+    def ask_confirm(self, s):
+        """Pauses before running the user's test command until the page answers (allow / allow-chat / deny) or Stop is pressed."""
+        d = self._wait_decision({"kind": "test", "cmd": s["test"], "cwd": self.root, "round": s["round"]})
         if d is None: return False
         if d == "deny": self.error = "denied by user"; self.say("denied: test command was not run"); return False
         if d == "allow-chat": self.allow_chat = True
         return True
+
+    def ask_files(self, changes):
+        """Pauses before the hands' files are written; shows what changes. Returns True to write."""
+        if not self.confirm or self.allow_files: return True
+        d = self._wait_decision({"kind": "files", "cwd": self.root, "round": core.load(self.root)["round"], "files": changes})
+        if d == "allow-chat": self.allow_files = True
+        if d in ("allow", "allow-chat"): return True
+        self.say("denied: files were not written"); return False
 
     def advance_once(self):
         """Does the next phase. Returns False when it has to wait for the user (manual brain) or the loop is finished."""
@@ -53,7 +64,7 @@ class Worker:
                     self.say("round %d: asking the brain (%s)…" % (s["round"], self.adapter))
                     core.cmd_brain_web(self.root, ["--adapter", self.adapter, "--cdp", os.environ.get("LUMUS_UI_CDP", "http://127.0.0.1:9222")])
                 elif ph == "need-hands":
-                    self.say("round %d: hands are writing code…" % s["round"]); core.cmd_hands(self.root)
+                    self.say("round %d: hands are writing code…" % s["round"]); core.cmd_hands(self.root, self.ask_files)
                 elif ph == "need-test":
                     self.say("round %d: running tests…" % s["round"]); core.cmd_test(self.root)
         except SystemExit as e:
@@ -62,6 +73,8 @@ class Worker:
         except Exception as e:
             self.error = "%s: %s" % (type(e).__name__, e); self.say("error: " + self.error); return False
         tail = out.getvalue().strip().splitlines()
+        for ln in tail[:-1]:
+            if ln.startswith("hands:"): self.say(ln[:220])
         if tail: self.say(tail[-1][:200])
         return True
 
@@ -117,7 +130,7 @@ def hands_name():
 
 def snapshot(w):
     root = w.root
-    base = {"dir": root, "adapter": w.adapter, "manual": w.manual, "busy": w.busy, "confirm": w.confirm, "allow_chat": w.allow_chat, "pending": w.pending, "error": w.error, "log": w.log[-40:],
+    base = {"dir": root, "adapter": w.adapter, "manual": w.manual, "busy": w.busy, "confirm": w.confirm, "allow_chat": w.allow_chat, "allow_files": w.allow_files, "pending": w.pending, "error": w.error, "log": w.log[-40:],
             "hands": {"url": os.environ.get("LUMUS_HANDS_URL", ""), "model": os.environ.get("LUMUS_HANDS_MODEL", ""), "provider": hands_name(),
                       "key_set": bool(os.environ.get("LUMUS_HANDS_KEY_FILE") and os.path.isfile(os.environ["LUMUS_HANDS_KEY_FILE"]) and os.path.getsize(os.environ["LUMUS_HANDS_KEY_FILE"]) > 0) or not os.environ.get("LUMUS_HANDS_KEY_FILE") and bool(os.environ.get("LUMUS_HANDS_URL"))}}
     try: s = core.load(root)
@@ -133,7 +146,7 @@ def snapshot(w):
         rounds.append({"n": n, "prompt": rd(os.path.join(d, "brain-prompt.md")), "brain_reply": rd(os.path.join(d, "brain-reply.md")),
                        "plan": rd(os.path.join(d, "plan.md")), "hands_task": rd(os.path.join(d, "hands-task.md")),
                        "files": [f for f, _ in core.parse_files(reply)] if reply else [],
-                       "test_output": rd(os.path.join(d, "test-output.txt")), "exit": hist.get(n)})
+                       "test_output": rd(os.path.join(d, "test-output.txt")), "hands_by": rd(os.path.join(d, "hands-by.txt")).strip(), "exit": hist.get(n)})
     base["rounds"] = rounds; base["report"] = rd(os.path.join(core.sd(root), "report.md"))
     return base
 
@@ -187,7 +200,7 @@ class Handler(BaseHTTPRequestHandler):
             if not os.path.isdir(d): return self._send(400, {"error": "project folder does not exist: " + d})
             w.root = os.path.abspath(d); w.adapter = data.get("adapter") if data.get("adapter") in ADAPTERS else "chatgpt"
             w.manual = bool(data.get("manual")); w.log = []; w.error = None
-            w.confirm = bool(data.get("confirm")); w.allow_chat = False; w.pending = None
+            w.confirm = bool(data.get("confirm")); w.allow_chat = False; w.allow_files = False; w.pending = None
             tf = os.path.join(core.sd(w.root), "task-input.txt"); os.makedirs(core.sd(w.root), exist_ok=True); core.write(tf, task + "\n")
             try:
                 with contextlib.redirect_stdout(io.StringIO()): core.cmd_init([tf, "--test", test, "--dir", w.root, "--max-rounds", str(mr)])
@@ -213,6 +226,8 @@ class Handler(BaseHTTPRequestHandler):
                 if act == "setup":
                     if w.running(): return self._send(409, {"error": "Сначала останови текущую работу"})
                     r = prov.setup(pid, data.get("key"), core.chat, data.get("model") or None, data.get("name"), data.get("url")); return self._send(200, dict(r, **prov.public()))
+                if act == "fallback":
+                    prov.fallback(pid, str(data.get("op", ""))); return self._send(200, prov.public())
                 if act == "disconnect": prov.disconnect(pid); prov.apply_env(); return self._send(200, prov.public())
                 if act == "models": return self._send(200, dict(prov.public(), count=len(prov.list_models(pid))))
                 if act == "select":
