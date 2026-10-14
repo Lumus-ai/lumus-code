@@ -30,7 +30,7 @@ jobs:
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8799/api/state >/dev/null 2>&1 && break; sleep 1; done
           curl -fsS http://127.0.0.1:8799/api/state | python3 -c "import sys,json; d=json.load(sys.stdin); print('state ok, dir', bool(d['dir']))"
           curl -fsS http://127.0.0.1:8799/ | grep -q "Lumus Code" && echo "page ok"
-          curl -fsS -X POST -H "X-Lumus-UI: 1" -H "Content-Type: application/json" -d '{"id":"custom","name":"Тест","url":"http://127.0.0.1:9/v1","key":"k-ci","model":"m"}' http://127.0.0.1:8799/api/providers/connect | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['connected'][0]['name']=='Тест', d; print('provider saved, Cyrillic ok')"
+          curl -fsS -X POST -H "X-Lumus-UI: 1" -H "Content-Type: application/json" -d '{"id":"custom","name":"\u0422\u0435\u0441\u0442","url":"http://127.0.0.1:9/v1","key":"k-ci","model":"m"}' http://127.0.0.1:8799/api/providers/connect | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['connected'][0]['name']=='Тест', d; print('provider saved, Cyrillic ok')"
           kill %1 || true
       - name: unit tests (informational)
         continue-on-error: true
@@ -64,7 +64,7 @@ jobs:
           $html = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8799/).Content
           if ($html -notmatch "Lumus Code") { throw "page content missing" }
           "page ok"
-          $body = [Text.Encoding]::UTF8.GetBytes('{"id":"custom","name":"Тест","url":"http://127.0.0.1:9/v1","key":"k-ci","model":"m"}')
+          $body = [Text.Encoding]::UTF8.GetBytes('{"id":"custom","name":"\u0422\u0435\u0441\u0442","url":"http://127.0.0.1:9/v1","key":"k-ci","model":"m"}')
           $r = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8799/api/providers/connect -Headers @{ "X-Lumus-UI" = "1" } -ContentType "application/json; charset=utf-8" -Body $body
           $name = $r.connected[0].name
           if ($name -ne ([string][char]0x0422 + [char]0x0435 + [char]0x0441 + [char]0x0442)) { throw "Cyrillic name broke: $name" }
