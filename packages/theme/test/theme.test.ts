@@ -2,9 +2,7 @@ import { expect, test } from "bun:test"
 import { migrateV1, parseThemeDocument, resolveThemeDocument } from "../src/tui/index.js"
 import type { ThemeV1Json } from "../src/tui/v1.js"
 
-const source: ThemeV1Json = await Bun.file(
-  new URL("../../tui/src/theme/assets/opencode.json", import.meta.url),
-).json()
+const source: ThemeV1Json = await Bun.file(new URL("../../tui/src/theme/assets/opencode.json", import.meta.url)).json()
 const document = migrateV1(source)
 
 test.each(["light", "dark"] as const)("resolves %s themes without status tokens", (mode) => {
@@ -49,4 +47,20 @@ test("a theme written before the backend role existed still decodes and resolves
     // what the component falls back to for a theme that omits the role
     expect(theme.text.muted).toBeDefined()
   }
+})
+
+test.each(["light", "dark"] as const)("decoration role resolves in %s and stays optional for older themes", (mode) => {
+  const theme = resolveThemeDocument(document, mode)
+  expect(theme.text.decoration?.star).toBeDefined()
+  const strip = <T extends { text?: { decoration?: unknown } }>(value: T) => {
+    const { decoration: _, ...text } = value.text ?? {}
+    return { ...value, text }
+  }
+  const legacy = parseThemeDocument({
+    ...document,
+    base: strip(document.base),
+    light: document.light && strip(document.light),
+    dark: document.dark && strip(document.dark),
+  })
+  expect(resolveThemeDocument(legacy, mode).text.decoration).toBeUndefined()
 })
