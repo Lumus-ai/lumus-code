@@ -15,6 +15,7 @@ _pspec = importlib.util.spec_from_file_location("lumus_providers", os.path.join(
 prov = importlib.util.module_from_spec(_pspec); _pspec.loader.exec_module(prov)
 
 ADAPTERS = ("chatgpt", "gemini") + (("stub",) if os.environ.get("LUMUS_UI_ALLOW_STUB") else ())   # stub = local test page, tests only
+PYCMD = "python" if sys.platform == "win32" else "python3"     # Windows has no python3 command
 CAP = 24000   # max chars of any one file sent to the page
 
 class Worker:
@@ -117,8 +118,8 @@ def detect_tests(d):
                     except OSError: pass
         return n
     if os.path.isdir(os.path.join(d, "tests")) and count(os.path.join(d, "tests")):
-        return {"cmd": "python3 -m unittest discover -s tests", "note": "%d тест(ов) в tests/" % count(os.path.join(d, "tests"))}
-    if count(d): return {"cmd": "python3 -m unittest discover", "note": "%d тест(ов) в папке" % count(d)}
+        return {"cmd": PYCMD + " -m unittest discover -s tests", "note": "%d тест(ов) в tests/" % count(os.path.join(d, "tests"))}
+    if count(d): return {"cmd": PYCMD + " -m unittest discover", "note": "%d тест(ов) в папке" % count(d)}
     try:
         pj = json.load(open(os.path.join(d, "package.json")))
         if pj.get("scripts", {}).get("test"): return {"cmd": "npm test", "note": "скрипт test в package.json"}
