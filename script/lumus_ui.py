@@ -4,7 +4,7 @@ Run:  lumus-demo ui [--port 8787] [--dir PROJECT]   -> http://127.0.0.1:8787
 Binds to 127.0.0.1 only, rejects foreign Host/Origin headers, never returns the hands API key
 (only whether the key file has content). The loop itself is lumus-loop.py; this file only drives it.
 """
-import contextlib, importlib.util, io, json, os, re, sys, threading, time, webbrowser
+import contextlib, importlib.util, io, json, os, re, sys, threading, time, urllib.parse, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -168,6 +168,10 @@ class Handler(BaseHTTPRequestHandler):
                 core.write(os.path.join(core.rdir(w.root, s["round"]), "brain-prompt.md"), text); return self._send(200, {"prompt": text})
             except SystemExit as e: return self._send(400, {"error": str(e.code)})
         if self.path.split("?")[0] == "/api/providers": return self._send(200, prov.public())
+        if self.path.split("?")[0] == "/api/providers/models":
+            pid = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("id", [""])[0]; d = prov.load()
+            if pid in d["providers"]: return self._send(200, {"models": prov.public(d)["connected"][list(d["providers"]).index(pid)]["models"]})
+            return self._send(200, {"models": prov.md_models(pid)})
         return self._send(404, {"error": "not found"})
     def do_POST(self):
         if not self._ok_host() or self.headers.get("X-Lumus-UI") != "1": return self._send(403, {"error": "forbidden"})
