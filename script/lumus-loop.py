@@ -18,7 +18,7 @@ OpenAI-compatible API that writes the code. Tests run automatically; failures go
   lumus-loop.py start [--choose] [--mode ui|terminal]  -> first launch asks: local chat page or terminal (remembered in ~/.config/lumus-demo/mode)
   lumus-loop.py status | report
 Optional fallback: brain-api (set LUMUS_BRAIN_URL / LUMUS_BRAIN_MODEL / LUMUS_BRAIN_KEY_FILE).
-Hands config: LUMUS_HANDS_URL, LUMUS_HANDS_MODEL, LUMUS_HANDS_KEY_FILE (key is read from the file, never printed).
+Hands config: pick a provider in the page (Настройки -> Провайдеры), or set LUMUS_HANDS_URL, LUMUS_HANDS_MODEL, LUMUS_HANDS_KEY_FILE (key is read from the file, never printed).
 The loop stops after max-rounds and writes report.md. Hands only write files inside the project dir.
 """
 import json, os, re, subprocess, sys, urllib.request, urllib.error
@@ -202,6 +202,11 @@ def cmd_hands(root):
     prompt = ("You are the hands: you write code exactly as instructed.\n\n## INSTRUCTIONS FROM THE BRAIN\n" + read(os.path.join(d, "hands-task.md")) +
               "\n\n## CURRENT FILES\n" + (project_files(root) or "(none)") +
               "\n\n## ANSWER FORMAT\nFor every file you create or change, output the COMPLETE file as:\n### FILE: relative/path.ext\n```\nfull content\n```\nNo other files, no prose needed.")
+    try:   # a provider picked in the UI (providers.json) wins over launcher defaults
+        import importlib.util as _iu
+        _sp = _iu.spec_from_file_location("lumus_providers", os.path.join(os.path.dirname(os.path.abspath(__file__)), "lumus_providers.py"))
+        _lp = _iu.module_from_spec(_sp); _sp.loader.exec_module(_lp); _lp.apply_env()
+    except Exception: pass
     text = chat(os.environ["LUMUS_HANDS_URL"], os.environ["LUMUS_HANDS_MODEL"], os.environ.get("LUMUS_HANDS_KEY_FILE"), prompt)
     write(os.path.join(d, "hands-reply.md"), text)
     files = parse_files(text)
