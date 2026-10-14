@@ -21,7 +21,7 @@ CATALOG = [
 CUSTOM_PREFIX = "custom-"
 
 def cfg_dir():
-    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    base = os.environ.get("XDG_CONFIG_HOME") or (os.environ.get("APPDATA") if sys.platform == "win32" else None) or os.path.expanduser("~/.config")
     return os.path.join(base, "lumus-demo")
 
 MD_URL = "https://models.dev/api.json"          # the same public list OpenCode uses (LUMUS_MODELS_DEV_URL overrides it, e.g. for tests)
