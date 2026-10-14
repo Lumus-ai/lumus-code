@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lumus loop</title>
+<style>
+:root{--bg:#07080f;--card:rgba(20,22,38,.72);--line:rgba(255,255,255,.09);--tx:#e8eaf6;--mut:#9aa0c0;--a:#7aa2ff;--b:#b388ff;--ok:#4ade80;--bad:#fb7185;--warn:#fbbf24;--r:16px}
+*{box-sizing:border-box}html,body{margin:0}
+body{background:radial-gradient(1200px 700px at 80% -10%,#1b1646 0,transparent 60%),radial-gradient(900px 600px at -10% 110%,#0d2a4a 0,transparent 55%),var(--bg);color:var(--tx);font:15px/1.55 Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh}
+#stars{position:fixed;inset:0;z-index:0;pointer-events:none}
+.wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:22px 18px 80px}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+.logo{font-weight:700;font-size:22px;letter-spacing:.2px;background:linear-gradient(90deg,var(--a),var(--b));-webkit-background-clip:text;background-clip:text;color:transparent}
+.logo small{font-weight:500;color:var(--mut);-webkit-text-fill-color:var(--mut);font-size:13px;margin-left:8px}
+.sp{flex:1}
+.chip{display:inline-flex;align-items:center;gap:7px;padding:4px 11px;border-radius:99px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--mut);font-size:12.5px;white-space:nowrap}
+.chip i{width:8px;height:8px;border-radius:50%;background:var(--mut)}
+.chip.ok{color:var(--ok);border-color:rgba(74,222,128,.35)}.chip.ok i{background:var(--ok)}
+.chip.bad{color:var(--bad);border-color:rgba(251,113,133,.35)}.chip.bad i{background:var(--bad)}
+.chip.run{color:var(--a);border-color:rgba(122,162,255,.4)}.chip.run i{background:var(--a);animation:pulse 1.2s infinite}
+.chip.warn{color:var(--warn);border-color:rgba(251,191,36,.35)}.chip.warn i{background:var(--warn)}
+@keyframes pulse{50%{opacity:.25}}
+.grid{display:grid;grid-template-columns:minmax(300px,380px) 1fr;gap:18px;align-items:start}
+@media(max-width:860px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:0 10px 40px rgba(0,0,0,.35)}
+.card h2{margin:0 0 12px;font-size:15px;font-weight:600;color:#fff;display:flex;align-items:center;gap:8px}
+label{display:block;font-size:12.5px;color:var(--mut);margin:12px 0 5px}
+textarea,input,select{width:100%;background:rgba(5,6,14,.6);color:var(--tx);border:1px solid var(--line);border-radius:11px;padding:10px 12px;font:inherit;outline:none;transition:border .15s,box-shadow .15s}
+textarea{min-height:110px;resize:vertical}
+textarea:focus,input:focus,select:focus{border-color:var(--a);box-shadow:0 0 0 3px rgba(122,162,255,.18)}
+.mono,pre,textarea.mono,input.mono{font-family:ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;font-size:12.5px}
+.row{display:flex;gap:10px;flex-wrap:wrap}.row>*{flex:1;min-width:110px}
+.btns{display:flex;gap:9px;flex-wrap:wrap;margin-top:14px}
+button{cursor:pointer;border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--tx);padding:9px 15px;border-radius:11px;font:inherit;font-weight:550;transition:transform .12s,background .15s,opacity .15s}
+button:hover{background:rgba(255,255,255,.11)}button:active{transform:translateY(1px)}button:disabled{opacity:.4;cursor:not-allowed}
+button.pri{border:0;color:#0a0b16;background:linear-gradient(90deg,var(--a),var(--b))}button.pri:hover{filter:brightness(1.08)}
+button.dng{color:var(--bad)}
+.sw{display:flex;align-items:center;gap:10px;margin-top:14px;color:var(--mut);font-size:13.5px}.sw input{width:auto}
+.hint{color:var(--mut);font-size:12.5px;margin-top:8px}
+.tl{display:flex;flex-direction:column;gap:14px}
+.round{border:1px solid var(--line);border-radius:14px;padding:14px;background:rgba(8,9,20,.45)}
+.rh{display:flex;align-items:center;gap:10px;margin-bottom:8px}.rh b{font-size:15px}
+details{border-top:1px solid var(--line);padding:8px 0}details:first-of-type{border-top:0}
+summary{cursor:pointer;color:var(--mut);font-size:13.5px;list-style:none;display:flex;gap:8px;align-items:center}
+summary::before{content:"▸";transition:transform .15s;color:var(--a)}details[open]>summary::before{transform:rotate(90deg)}
+pre{margin:8px 0 0;padding:11px;background:rgba(0,0,0,.4);border:1px solid var(--line);border-radius:10px;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto;color:#d6daf5}
+.files{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}.files span{font:12px ui-monospace,Menlo,monospace;padding:3px 9px;border-radius:8px;background:rgba(122,162,255,.12);color:#b9ccff}
+.log{max-height:150px;overflow:auto;font:12px/1.6 ui-monospace,Menlo,monospace;color:var(--mut)}
+.err{background:rgba(251,113,133,.1);border:1px solid rgba(251,113,133,.35);color:#ffc2cb;border-radius:11px;padding:10px 12px;margin:10px 0;font-size:13.5px}
+.empty{color:var(--mut);text-align:center;padding:34px 10px}
+.ro{font-size:12.5px;color:var(--mut);display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin-top:8px;word-break:break-all}
+.ro b{color:var(--tx);font-weight:500}
+dialog{background:#0d0f1e;color:var(--tx);border:1px solid var(--line);border-radius:16px;max-width:760px;width:92vw;padding:20px}dialog::backdrop{background:rgba(0,0,0,.6)}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head><body>
+<canvas id="stars" aria-hidden="true"></canvas>
+<div class="wrap">
+<header><div class="logo">Lumus loop<small>demo · brain + hands</small></div><div class="sp"></div>
+<span id="chipPhase" class="chip"><i></i><span>idle</span></span><span id="chipKey" class="chip"><i></i><span>hands key</span></span></header>
+<div class="grid">
+<div style="display:flex;flex-direction:column;gap:18px">
+<section class="card"><h2>✦ Task</h2>
+<label for="task">What should be built? (put your tests in the project folder)</label>
+<textarea id="task" placeholder="Build ledger.py with parse_amount… Tests are in tests/test_ledger.py and must pass."></textarea>
+<label for="test">Test command</label><input id="test" class="mono" value="python3 -m unittest discover -s tests">
+<div class="btns"><button class="pri" id="bInit">Create loop</button></div>
+<div id="initErr"></div></section>
+<section class="card"><h2>⚙ Settings</h2>
+<label for="dir">Project folder</label><input id="dir" class="mono" placeholder="/home/you/myproj">
+<div class="row"><div><label for="adapter">Brain (web chat)</label><select id="adapter"><option value="chatgpt">ChatGPT web</option><option value="gemini">Gemini web</option></select></div>
+<div><label for="rounds">Max rounds</label><input id="rounds" type="number" min="1" max="20" value="5"></div></div>
+<div class="sw"><input type="checkbox" id="manual"><label for="manual" style="margin:0">Manual brain mode (copy prompt, paste reply)</label></div>
+<div class="ro"><span>Hands</span><b id="hModel">–</b><span>Endpoint</span><b id="hUrl">–</b><span>API key</span><b id="hKey">–</b></div>
+<div class="hint">The key is read from its file by the loop and is never shown here.</div></section>
+</div>
+<div style="display:flex;flex-direction:column;gap:18px">
+<section class="card"><h2>◉ Live</h2>
+<div style="display:flex;gap:10px;flex-wrap:wrap"><span id="chipRound" class="chip"><i></i><span>round –</span></span><span id="chipResult" class="chip"><i></i><span>no result yet</span></span></div>
+<div class="btns"><button class="pri" id="bRun">Run loop</button><button id="bNext">Run next round</button><button class="dng" id="bStop">Stop</button><button id="bReport">Report</button></div>
+<div id="runErr"></div>
+<div id="manualBox" style="display:none;margin-top:14px"><div class="hint" style="margin:0 0 6px">Manual brain: copy the prompt, paste it into your chat, paste the full answer back.</div>
+<div class="btns" style="margin:0 0 8px"><button id="bCopy">Copy prompt</button></div>
+<textarea id="reply" class="mono" placeholder="PLAN … HANDS TASK … STATUS …"></textarea><div class="btns"><button class="pri" id="bReply">Submit reply</button></div><div id="replyErr"></div></div>
+<details style="margin-top:12px"><summary>Activity log</summary><div class="log" id="log"></div></details></section>
+<section class="card"><h2>⌁ Rounds</h2><div class="tl" id="rounds_list"><div class="empty">No rounds yet. Create the loop, then press Run.</div></div></section>
+</div></div></div>
+<dialog id="dlg"><h2 style="margin-top:0">Report</h2><pre id="rep"></pre><div class="btns"><button id="dclose">Close</button></div></dialog>
+<script>
+const $=s=>document.querySelector(s);
+const api=(p,b)=>fetch(p,b===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json","X-Lumus-UI":"1"},body:JSON.stringify(b)}).then(async r=>{const j=await r.json();if(!r.ok)throw new Error(j.error||r.status);return j});
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let S=null,openSet=new Set(),lastSig="",touched=false;
+document.addEventListener("toggle",e=>{if(e.target.dataset&&e.target.dataset.k){e.target.open?openSet.add(e.target.dataset.k):openSet.delete(e.target.dataset.k)}},true);
+function chip(el,cls,text){el.className="chip "+cls;el.lastElementChild.textContent=text}
+function det(k,title,body,def){if(!body)return"";if(!openSet.has(k)&&def&&!openSet.has("x"+k)){openSet.add(k)}return `<details data-k="${k}" ${openSet.has(k)?"open":""}><summary>${title}</summary><pre>${esc(body)}</pre></details>`}
+function render(){
+ if(!S)return;
+ const ph=S.busy?"run":S.error?"bad":S.result?(/PASSED/.test(S.result)?"ok":"bad"):S.initialized?"warn":"";
+ chip($("#chipPhase"),ph,S.busy?("working: "+S.busy):S.result?"finished":S.initialized?("phase: "+S.phase):"not created");
+ chip($("#chipKey"),S.hands.key_set?"ok":"warn",S.hands.key_set?"hands key set":"hands key missing");
+ $("#hModel").textContent=S.hands.model||"–";$("#hUrl").textContent=S.hands.url||"–";$("#hKey").textContent=S.hands.key_set?"set (hidden)":"not set";
+ if(!touched){if(S.dir)$("#dir").value=S.dir;$("#adapter").value=S.adapter;$("#manual").checked=S.manual;if(S.initialized){$("#test").value=S.test;$("#rounds").value=S.max_rounds;$("#task").value=S.task.trim()}}
+ chip($("#chipRound"),"",S.initialized?("round "+S.round+" / "+S.max_rounds):"round –");
+ chip($("#chipResult"),S.result?(/PASSED/.test(S.result)?"ok":"bad"):"",S.result||"no result yet");
+ $("#bRun").disabled=!S.initialized||!!S.busy||!!S.result;$("#bNext").disabled=$("#bRun").disabled;$("#bStop").disabled=!S.busy;$("#bReport").disabled=!S.result;
+ $("#runErr").innerHTML=S.error?`<div class="err">${esc(S.error)}</div>`:"";
+ const mb=S.initialized&&S.manual&&S.phase==="need-brain"&&!S.result;$("#manualBox").style.display=mb?"block":"none";
+ $("#log").innerHTML=S.log.map(esc).join("<br>")||"–";
+ const L=$("#rounds_list");
+ if(!S.rounds||!S.rounds.length){L.innerHTML='<div class="empty">No rounds yet. Create the loop, then press Run.</div>';return}
+ L.innerHTML=S.rounds.slice().reverse().map(r=>{
+  const waiting=r.exit==null&&r.n===S.round&&S.phase==="need-brain"&&!S.busy&&!S.result;
+  const st=waiting?'<span class="chip warn"><i></i>waiting for brain</span>':r.exit===0?'<span class="chip ok"><i></i>tests pass</span>':r.exit!=null?'<span class="chip bad"><i></i>tests fail</span>':'<span class="chip run"><i></i>in progress</span>';
+  const k="r"+r.n+"-";
+  return `<div class="round"><div class="rh"><b>Round ${r.n}</b>${st}</div>`+
+   det(k+"p","Brain prompt",r.prompt)+det(k+"b","Brain reply",r.brain_reply)+det(k+"h","Hands task",r.hands_task)+
+   (r.files.length?`<div class="files">${r.files.map(f=>`<span>${esc(f)}</span>`).join("")}</div>`:"")+
+   det(k+"t","Test output",r.test_output,true)+`</div>`}).join("");
+}
+async function poll(){try{const j=await api("/api/state");const sig=JSON.stringify(j);if(sig!==lastSig){lastSig=sig;S=j;render()}}catch(e){}}
+async function act(p,b,errSel){try{S=await api(p,b);lastSig=JSON.stringify(S);$(errSel||"#runErr").innerHTML="";render()}catch(e){$(errSel||"#runErr").innerHTML=`<div class="err">${esc(e.message)}</div>`}}
+["dir","adapter","rounds","test","task","manual"].forEach(id=>$("#"+id).addEventListener("input",()=>touched=true));
+$("#bInit").onclick=()=>act("/api/init",{task:$("#task").value,test:$("#test").value,dir:$("#dir").value,max_rounds:+$("#rounds").value,adapter:$("#adapter").value,manual:$("#manual").checked},"#initErr").then(()=>{touched=false});
+$("#bRun").onclick=()=>act("/api/run",{manual:$("#manual").checked,adapter:$("#adapter").value});
+$("#bNext").onclick=()=>act("/api/round",{manual:$("#manual").checked,adapter:$("#adapter").value});
+$("#bStop").onclick=()=>act("/api/stop",{});
+$("#manual").onchange=()=>api("/api/settings",{manual:$("#manual").checked}).then(j=>{S=j;render()});
+$("#adapter").onchange=()=>api("/api/settings",{adapter:$("#adapter").value});
+$("#bCopy").onclick=async()=>{try{const j=await api("/api/prompt");await navigator.clipboard.writeText(j.prompt);$("#bCopy").textContent="Copied ✓";setTimeout(()=>$("#bCopy").textContent="Copy prompt",1500)}catch(e){$("#replyErr").innerHTML=`<div class="err">${esc(e.message)}</div>`}};
+$("#bReply").onclick=()=>act("/api/brain-reply",{text:$("#reply").value},"#replyErr").then(()=>{$("#reply").value=""});
+$("#bReport").onclick=()=>{$("#rep").textContent=S.report||"(no report yet)";$("#dlg").showModal()};$("#dclose").onclick=()=>$("#dlg").close();
+poll();setInterval(poll,1500);
+// stars
+(function(){const c=$("#stars"),x=c.getContext("2d");let W,H,st=[];const rm=matchMedia("(prefers-reduced-motion: reduce)").matches;
+ function size(){W=c.width=innerWidth;H=c.height=innerHeight;st=Array.from({length:Math.round(W*H/9000)},()=>({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.3+.2,p:Math.random()*6.28,s:Math.random()*.6+.2}))}
+ function draw(t){x.clearRect(0,0,W,H);for(const s of st){const a=rm?.6:.35+.5*Math.abs(Math.sin(t/1800*s.s+s.p));x.globalAlpha=a;x.fillStyle="#cfd8ff";x.beginPath();x.arc(s.x,s.y,s.r,0,6.28);x.fill()}if(!rm)requestAnimationFrame(draw)}
+ addEventListener("resize",()=>{size();if(rm)draw(0)});size();rm?draw(0):requestAnimationFrame(draw)})();
+</script></body></html>
