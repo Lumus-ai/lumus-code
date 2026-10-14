@@ -15,6 +15,7 @@ OpenAI-compatible API that writes the code. Tests run automatically; failures go
   lumus-loop.py run [--adapter chatgpt]  -> whole loop: web brain -> hands -> tests, until pass or max rounds
   lumus-loop.py brain-web [--adapter chatgpt] [--cdp URL]  -> one brain turn through the web chat (one chat per task)
   lumus-loop.py ui [--port 8787] [--dir PROJECT] [--no-open]  -> localhost web page for the whole loop (127.0.0.1 only)
+  lumus-loop.py start [--choose] [--mode ui|terminal]  -> first launch asks: local chat page or terminal (remembered in ~/.config/lumus-demo/mode)
   lumus-loop.py status | report
 Optional fallback: brain-api (set LUMUS_BRAIN_URL / LUMUS_BRAIN_MODEL / LUMUS_BRAIN_KEY_FILE).
 Hands config: LUMUS_HANDS_URL, LUMUS_HANDS_MODEL, LUMUS_HANDS_KEY_FILE (key is read from the file, never printed).
@@ -240,6 +241,30 @@ def write_report(root, s):
     lines += ["", "Claims are the loop's own record: brain plans and hands code are model output; only the test exit codes above were measured here."]
     write(os.path.join(sd(root), "report.md"), "\n".join(lines) + "\n")
 
+TERMINAL_HELP = """Режим «Терминал». Команды (в папке проекта):
+  lumus-demo init task.txt --test "python3 -m unittest discover -s tests"   создать задачу
+  lumus-demo run                                                            весь цикл: мозг -> руки -> тесты
+  lumus-demo status | report                                                состояние / отчёт
+  lumus-demo chrome                                                         окно Chrome для мозга (ChatGPT без входа)
+Сменить выбор: lumus-demo --choose   (страница: lumus-demo ui)"""
+
+def cmd_start(a):
+    cfg = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "lumus-demo", "mode")
+    mode = opt(a, "--mode", None)
+    if mode not in (None, "ui", "terminal"): raise SystemExit("--mode must be ui or terminal")
+    if not mode and "--choose" not in a: mode = read(cfg).strip() or None
+    asked = False
+    if mode not in ("ui", "terminal"):
+        print("Lumus Code. Где будем работать?\n  1) Локальная страница в браузере (рекомендуем, адрес 127.0.0.1)\n  2) Терминал")
+        try: ans = input("Выбор [1]: ").strip() or "1"
+        except EOFError: ans = "1"
+        mode = "terminal" if ans.startswith("2") else "ui"; asked = True
+    if asked:
+        try: os.makedirs(os.path.dirname(cfg), exist_ok=True); write(cfg, mode + "\n"); print("Выбор запомнен (%s). Сменить: lumus-demo --choose" % cfg)
+        except OSError as e: print("Не удалось запомнить выбор:", e)
+    if mode == "terminal": print(TERMINAL_HELP); return
+    import lumus_ui; return lumus_ui.serve(int(opt(a, "--port", 8787)), opt(a, "--dir", "."), "--no-open" not in a)
+
 def main(a):
     if not a: print(__doc__); raise SystemExit(2)
     c, rest, root = a[0], a[1:], "."
@@ -249,6 +274,7 @@ def main(a):
     if c == "brain-api": return cmd_brain_api(root)
     if c == "ui":
         import lumus_ui; return lumus_ui.serve(int(opt(rest, "--port", 8787)), opt(rest, "--dir", "."), "--no-open" not in rest)
+    if c == "start": return cmd_start(rest)
     if c == "chrome":
         import lumus_loop_web as web; return web.start_chrome()
     if c == "brain-web": return cmd_brain_web(root, rest)
