@@ -199,6 +199,26 @@ class TransportTests(unittest.TestCase):
             save_state(filename, {"base": self.base, "room": "alpha", "token": "fixture-only"})
             self.assertEqual(invoke("peek").stdout.strip(), "none")
 
+    def test_cli_read_counts_messages_not_characters(self):
+        with tempfile.TemporaryDirectory() as folder:
+            filename = os.path.join(folder, ".lumus-guest.json")
+            def invoke(*command):
+                return subprocess.run([sys.executable, "lumus-guest.py", *command], env={**os.environ, "HOME": folder, "PYTHONDONTWRITEBYTECODE": "1"}, capture_output=True, text=True)
+            save_state(filename, {"base": self.base, "room": "alpha", "token": "fixture-only"})
+            self.room_payload = {"data": [
+                {"id": "m1", "text": "first", "author": "host", "role": "user"},
+                {"id": "m2", "text": "second", "author": "host", "role": "user"},
+                {"id": "m3", "text": "third", "author": "host", "role": "user"},
+            ], "running": False}
+            out = invoke("read", "2").stdout
+            shown = json.loads(out)
+            self.assertEqual([m["id"] for m in shown], ["m2", "m3"])
+            out = invoke("read").stdout
+            self.assertEqual(len(json.loads(out)), 3)
+            bad = invoke("read", "abc")
+            self.assertEqual(bad.returncode, 2)
+            self.assertIn("count must be a number of messages", bad.stdout)
+
     def test_state_is_atomic_and_private(self):
         with tempfile.TemporaryDirectory() as folder:
             filename = os.path.join(folder, "state.json")
