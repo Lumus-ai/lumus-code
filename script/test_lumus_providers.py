@@ -3,6 +3,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE)
 import lumus_providers as pv, lumus_ui
 SECRET = "sk-TEST-SECRET-123"
+def _m(i, free=None, ctx=8000): return {"id": i, "name": i.upper(), "limit": {"context": ctx}, **({"cost": {"input": 0, "output": 0} if free else {"input": 1, "output": 2}} if free is not None else {})}
+MD = {"openrouter": {"id": "openrouter", "name": "OpenRouter", "api": "https://openrouter.ai/api/v1", "npm": "@openrouter/ai-sdk-provider", "env": ["OPENROUTER_API_KEY"], "doc": "https://openrouter.ai/models", "models": {"a:free": _m("a:free", True), "b": _m("b", False)}},
+      "openai": {"id": "openai", "name": "OpenAI", "npm": "@ai-sdk/openai", "env": ["OPENAI_API_KEY"], "doc": "https://platform.openai.com", "models": {"g1": _m("g1", False)}},
+      "github-copilot": {"id": "github-copilot", "name": "GitHub Copilot", "api": "https://api.githubcopilot.com", "npm": "x", "models": {}},
+      "amazon-bedrock": {"id": "amazon-bedrock", "name": "Amazon Bedrock", "npm": "@ai-sdk/amazon-bedrock", "models": {}},
+      "weird": {"id": "weird", "name": "Weird", "npm": "foo", "models": {}},
+      "local": {"id": "local", "name": "LMStudio", "api": "http://127.0.0.1:1234/v1", "npm": "@ai-sdk/openai-compatible", "models": {"m": _m("m", True)}}}
 class API(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def _j(self, code, o):
@@ -18,7 +25,9 @@ srv = ThreadingHTTPServer(("127.0.0.1", 0), API); threading.Thread(target=srv.se
 URL = "http://127.0.0.1:%d" % srv.server_address[1]
 def mode(p): return stat.S_IMODE(os.stat(p).st_mode)
 class T(unittest.TestCase):
-    def setUp(self): self.cfg = tempfile.mkdtemp(); os.environ["XDG_CONFIG_HOME"] = self.cfg
+    def setUp(self):
+        self.cfg = tempfile.mkdtemp(); os.environ["XDG_CONFIG_HOME"] = self.cfg
+        self.fx = os.path.join(self.cfg, "fx.json"); json.dump(MD, open(self.fx, "w")); os.environ["LUMUS_MODELS_DEV_URL"] = "file://" + self.fx; pv._md.update(t=0, d=None)
     def tearDown(self): shutil.rmtree(self.cfg, ignore_errors=True)
     def test_custom_setup_picks_free_model_tests_and_activates(self):
         r = pv.setup("custom", SECRET, lumus_ui.core.chat, name="Мой сервер", url=URL)
@@ -43,6 +52,24 @@ class T(unittest.TestCase):
     def test_disconnect_removes_key_and_active(self):
         r = pv.setup("custom", SECRET, lumus_ui.core.chat, name="D", url=URL); pv.disconnect(r["id"])
         self.assertFalse(os.path.exists(pv.key_path(r["id"]))); self.assertIsNone(pv.load()["active"]); self.assertEqual(pv.public()["connected"], [])
+    def test_catalog_from_models_dev_popular_first_and_support_flags(self):
+        es = {e["id"]: e for e in pv.entries()}
+        self.assertEqual([e["id"] for e in pv.entries()][:3], ["anthropic" if "anthropic" in es else "github-copilot", "github-copilot", "openai"][:3] if "anthropic" in es else ["github-copilot", "openai", "openrouter"])
+        self.assertTrue(es["openai"]["supported"] and es["openai"]["url"] == "https://api.openai.com/v1")          # URL added from the manual map
+        self.assertFalse(es["github-copilot"]["supported"]); self.assertFalse(es["amazon-bedrock"]["supported"]); self.assertIn("свой провайдер", es["weird"]["note"])
+        self.assertEqual((es["openrouter"]["models_n"], es["openrouter"]["free_n"]), (2, 1)); self.assertFalse(es["local"]["needs_key"]); self.assertIn("ollama", es)
+        self.assertEqual(pv.public()["source"], "models.dev"); self.assertTrue(all("url" not in c for c in pv.public()["catalog"]))
+        ms = pv.md_models("openrouter"); self.assertEqual([m["id"] for m in ms], ["a:free", "b"]); self.assertTrue(ms[0]["free"] and ms[1]["free"] is False)
+    def test_unsupported_cannot_connect_and_paid_only_provider_is_not_auto_picked(self):
+        with self.assertRaises(ValueError): pv.connect("github-copilot", "k")
+        orig = pv.list_models; pv.list_models = lambda *a, **k: (_ for _ in ()).throw(ValueError("Нет связи с провайдером"))
+        try: r = pv.setup("openai", "k", lambda *a: "ok")
+        finally: pv.list_models = orig
+        self.assertFalse(r["ok"]); self.assertIn("нет бесплатных", r["error"]); self.assertIsNone(pv.load()["active"])
+        self.assertTrue(pv.public()["connected"][0]["models"][0]["id"] == "g1")     # models come from models.dev even without a live /models call
+    def test_offline_falls_back_to_builtin_list(self):
+        os.environ["LUMUS_MODELS_DEV_URL"] = "off"; pv._md.update(t=0, d=None); shutil.rmtree(self.cfg + "/lumus-demo", ignore_errors=True)
+        self.assertEqual(pv.public()["source"], "builtin"); self.assertIn("gemini", [e["id"] for e in pv.entries()])
     def test_friendly_codes(self):
         for c, w in ((401, "Ключ"), (429, "лимит"), (404, "модел"), (503, "сбой"), (None, "связи")): self.assertIn(w.lower(), pv.friendly(c).lower())
     def test_http_endpoints_never_return_key(self):
