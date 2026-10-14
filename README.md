@@ -36,6 +36,19 @@ New in Lumus Code:
 
 Then run `lumus-code`. A regular `opencode` on the same computer keeps its own command. The installers were adapted from the fork's and have not been run end to end on a clean machine for this release.
 
+## Lumus Demo (ветка demo)
+
+Демо-версия с веб-интерфейсом, подключением провайдеров и резервными моделями. Одна команда, права администратора не нужны.
+
+| ОС | Команда |
+|---|---|
+| Linux / macOS | `curl -fsSL https://raw.githubusercontent.com/Lumus-ai/lumus-code/demo/install.sh \| bash` |
+| Windows (PowerShell) | `irm https://raw.githubusercontent.com/Lumus-ai/lumus-code/demo/install.ps1 \| iex` |
+
+Дальше: `lumus-demo` (запуск), `lumus-demo update` (обновление), `lumus-demo --choose` (выбор провайдера). Окно настройки открывается в браузере на 127.0.0.1.
+
+Проверено на чистых раннерах GitHub Actions (Ubuntu, macOS, Windows): установка, обновление, запуск страницы, сохранение провайдера с русским именем. На реальных компьютерах с Windows и macOS не проверялось.
+
 ## External-agent mode
 
 An outside agent (for example an Instinct assistant) can join a room, post answers and tool results, and ask for file edits or commands, without ever calling the Host's model.
