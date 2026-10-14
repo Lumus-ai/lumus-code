@@ -55,7 +55,13 @@ class Worker:
         if s["result"]: return False
         ph = s["phase"]
         if ph == "need-test" and self.confirm and not self.allow_chat and not self.ask_confirm(s): return False
-        out = io.StringIO()
+        w = self
+        class Out(io.StringIO):      # hands: lines (provider switches) reach the log while the step is still running
+            def write(self, s):
+                for ln in str(s).splitlines():
+                    if ln.startswith("hands:") and not ln.startswith("hands wrote"): w.say(ln[:220])
+                return super().write(s)
+        out = Out()
         try:
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
                 if ph == "need-brain":
@@ -73,8 +79,6 @@ class Worker:
         except Exception as e:
             self.error = "%s: %s" % (type(e).__name__, e); self.say("error: " + self.error); return False
         tail = out.getvalue().strip().splitlines()
-        for ln in tail[:-1]:
-            if ln.startswith("hands:"): self.say(ln[:220])
         if tail: self.say(tail[-1][:200])
         return True
 
