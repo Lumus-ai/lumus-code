@@ -24,6 +24,81 @@ def cfg_dir():
     base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     return os.path.join(base, "lumus-demo")
 
+MD_URL = "https://models.dev/api.json"          # the same public list OpenCode uses (LUMUS_MODELS_DEV_URL overrides it, e.g. for tests)
+POPULAR = ["opencode", "anthropic", "github-copilot", "openai", "google", "openrouter", "vercel"]
+URL_MAP = {   # providers that models.dev lists without an OpenAI-compatible URL; official OpenAI-compatible endpoints
+    "openai": "https://api.openai.com/v1", "google": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "anthropic": "https://api.anthropic.com/v1", "groq": "https://api.groq.com/openai/v1", "cerebras": "https://api.cerebras.ai/v1",
+    "mistral": "https://api.mistral.ai/v1", "xai": "https://api.x.ai/v1", "togetherai": "https://api.together.xyz/v1",
+    "perplexity": "https://api.perplexity.ai", "cohere": "https://api.cohere.ai/compatibility/v1",
+    "deepinfra": "https://api.deepinfra.com/v1/openai", "vercel": "https://ai-gateway.vercel.sh/v1"}
+KEY_URLS = {"gemini": "https://aistudio.google.com/apikey", "google": "https://aistudio.google.com/apikey", "openrouter": "https://openrouter.ai/keys",
+    "groq": "https://console.groq.com/keys", "cerebras": "https://cloud.cerebras.ai/", "openai": "https://platform.openai.com/api-keys",
+    "anthropic": "https://console.anthropic.com/settings/keys", "deepseek": "https://platform.deepseek.com/api_keys",
+    "nvidia": "https://build.nvidia.com/settings/api-keys", "mistral": "https://console.mistral.ai/api-keys", "xai": "https://console.x.ai/",
+    "togetherai": "https://api.together.ai/settings/api-keys", "huggingface": "https://huggingface.co/settings/tokens", "opencode": "https://opencode.ai/auth",
+    "vercel": "https://vercel.com/dashboard/ai-gateway"}
+NOTES = {"anthropic": "через OpenAI-совместимый режим, не проверено"}
+_md = {"t": 0.0, "d": None, "src": "builtin"}
+
+def md_load():
+    import time
+    if _md["d"] is not None and time.time() - _md["t"] < 600: return _md["d"]
+    path = os.path.join(cfg_dir(), "models-dev.json"); url = os.environ.get("LUMUS_MODELS_DEV_URL", MD_URL); data = None; src = "builtin"
+    try:
+        if time.time() - os.path.getmtime(path) < 86400:
+            with open(path) as f: data = json.load(f); src = "cache"
+    except (OSError, ValueError): pass
+    if data is None and url != "off":
+        try:
+            with urllib.request.urlopen(url, timeout=12) as r: raw = r.read(40_000_000)
+            data = json.loads(raw); src = "models.dev"
+            _write600(path, raw.decode("utf-8"))
+        except Exception: data = None
+    if data is None:
+        try:
+            with open(path) as f: data = json.load(f); src = "cache (устарел)"
+        except (OSError, ValueError): data = None
+    if not isinstance(data, dict): data = None
+    _md.update(t=time.time(), d=data, src=src if data else "builtin"); return data
+
+def _free(m):
+    c = m.get("cost")
+    return None if not isinstance(c, dict) or "input" not in c else (c.get("input") == 0 and c.get("output", 0) == 0)
+
+def md_models(mid):
+    md = md_load(); p = (md or {}).get(mid) or {}
+    out = [{"id": m.get("id", k), "name": m.get("name", k), "ctx": (m.get("limit") or {}).get("context", 0), "free": _free(m)} for k, m in (p.get("models") or {}).items() if isinstance(m, dict)]
+    out.sort(key=lambda m: (m["free"] is not True, m["name"].lower())); return out[:600]
+
+def entries():
+    md = md_load(); out = []
+    local = {"id": "ollama", "name": "Ollama (локально)", "url": "http://127.0.0.1:11434/v1", "needs_key": False, "supported": True, "note": "", "popular": False,
+             "models_n": 0, "free_n": 0, "key_url": "", "doc": "https://ollama.com", "env": "", "model": ""}
+    if not md:
+        for c in CATALOG:
+            e = dict(c, supported=True, note="", popular=c["id"] in POPULAR, models_n=0, free_n=0, doc="", env="")
+            if c["id"] != "ollama": out.append(e)
+        out.append(local); return out
+    for k, p in md.items():
+        if not isinstance(p, dict): continue
+        url = URL_MAP.get(k) or p.get("api") or ""; npm = str(p.get("npm", "")); sup, note = True, NOTES.get(k, "")
+        if k == "github-copilot": sup, note = False, "вход через GitHub, пока не поддерживается"
+        elif any(x in npm for x in ("bedrock", "vertex", "azure")): sup, note = False, "облачный аккаунт, пока не поддерживается"
+        elif not url: sup, note = False, "нет адреса API: добавь как свой провайдер"
+        ms = [m for m in (p.get("models") or {}).values() if isinstance(m, dict)]
+        loc = url.startswith("http://127.0.0.1") or url.startswith("http://localhost")
+        out.append({"id": k, "name": str(p.get("name", k)), "url": url, "needs_key": not loc, "supported": sup, "note": note, "popular": k in POPULAR,
+                    "models_n": len(ms), "free_n": sum(1 for m in ms if _free(m) is True), "key_url": KEY_URLS.get(k, ""), "doc": str(p.get("doc", "")),
+                    "env": (p.get("env") or [""])[0], "model": ""})
+    if not any(e["id"] == "ollama" for e in out): out.append(local)
+    out.sort(key=lambda e: (POPULAR.index(e["id"]) if e["id"] in POPULAR else 999, e["name"].lower())); return out
+
+def find_entry(pid):
+    for e in entries():
+        if e["id"] == pid: return e
+    return None
+
 def friendly(code=None, what="провайдер"):
     """Plain Russian text for an API failure (no response bodies, they can carry secrets)."""
     m = {401: "Ключ не подходит. Проверь, что скопировал его целиком, без пробелов.", 403: "Ключ не подходит или у него нет доступа к этой модели.",
@@ -70,19 +145,20 @@ def check_url(url):
 
 def public(d=None):
     d = d or load(); out = []
-    cat = {c["id"]: c for c in CATALOG}
     for pid, p in d["providers"].items():
         needs = p.get("needs_key", True)
-        out.append({"id": pid, "name": p["name"], "url": p["url"], "model": p.get("model", ""), "models": p.get("models", [])[:300],
+        ms = p.get("models") or (md_models(p["md_id"]) if p.get("md_id") else [])
+        out.append({"id": pid, "name": p["name"], "url": p["url"], "model": p.get("model", ""), "models": ms[:600],
                     "needs_key": needs, "key_set": has_key(pid) if needs else True, "custom": pid.startswith(CUSTOM_PREFIX)})
-    return {"catalog": [c for c in CATALOG if c["id"] not in d["providers"]], "connected": out, "active": d.get("active"), "ollama": detect_ollama()}
+    cat = [{k: v for k, v in e.items() if k != "url"} for e in entries() if e["id"] not in d["providers"]]
+    return {"catalog": cat, "connected": out, "active": d.get("active"), "ollama": detect_ollama(), "source": _md["src"]}
 
 def connect(pid, key, name=None, url=None, model=None):
-    d = load(); cat = {c["id"]: c for c in CATALOG}
-    key = (key or "").strip()
+    d = load(); key = (key or "").strip(); c = None if pid == "custom" or pid.startswith(CUSTOM_PREFIX) else find_entry(pid)
+    if c is not None and not c["supported"]: raise ValueError("Этот провайдер пока не поддерживается" + (": " + c["note"] if c["note"] else ""))
     if len(key) > 4096 or "\n" in key or "\r" in key: raise ValueError("Ключ выглядит неверно")
-    if pid in cat:
-        c = cat[pid]; entry = {"name": c["name"], "url": c["url"], "needs_key": c["needs_key"], "model": model or c["model"], "models": []}
+    if c is not None:
+        entry = {"name": c["name"], "url": c["url"], "needs_key": c["needs_key"], "model": model or c.get("model", ""), "models": [], "md_id": pid}
     else:
         name = (name or "").strip()[:60]
         if not name: raise ValueError("Укажи название провайдера")
@@ -127,7 +203,11 @@ def list_models(pid, timeout=25):
         free = None
         if pr is not None and "prompt" in pr: free = str(pr.get("prompt")) in ("0", "0.0") and str(pr.get("completion", "0")) in ("0", "0.0")
         out.append({"id": mid, "free": free})
-    out.sort(key=lambda m: m["id"]); out = out[:400]
+    if p.get("md_id"):
+        known = {m["id"]: m for m in md_models(p["md_id"])}
+        for m in out:
+            if m["free"] is None and m["id"] in known: m["free"] = known[m["id"]]["free"]; m["ctx"] = known[m["id"]]["ctx"]; m["name"] = known[m["id"]]["name"]
+    out.sort(key=lambda m: (m["free"] is not True, m["id"])); out = out[:600]
     p["models"] = out; save(d); return out
 
 def select(pid, model):
@@ -169,6 +249,9 @@ def setup(pid, key, chat, model=None, name=None, url=None):
     try: models = list_models(pid) if not model else []
     except ValueError as e: models = []; lerr = str(e)
     if lerr and lerr.startswith("Ключ"): return fail(lerr, True)
+    if not models and p.get("md_id") and not model: models = md_models(p["md_id"])
+    if not model and models and not any(x.get("free") is True for x in models) and all(x.get("free") is False for x in models):
+        return fail("Ключ сохранён. У этого провайдера нет бесплатных моделей, поэтому сам выбирать не стал (платные тратят деньги). Открой «Модели» у провайдера и выбери модель сам.")
     m = (model or "").strip() or pick_model(models, p.get("model", ""))
     if not m: return fail(lerr or "Ключ сохранён, но модель выбрать не вышло. Открой «Настройки → Провайдеры» и вставь название модели.")
     try: reply = test(pid, m, chat)
