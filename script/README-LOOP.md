@@ -1,0 +1,71 @@
+> **DEMO VERSION (branch `demo`).** A working prototype, not a finished product.
+> Works (tested): the file-based loop (brain prompt -> reply parsing -> free-model hands -> tests -> failures back to the brain, max 5 rounds);
+> a real ChatGPT guest brain + Gemini flash-lite hands run that failed 2 rounds and passed in round 3; unit tests and a stub-page Playwright test.
+> NOT tested: the Playwright auto-mode on the real ChatGPT / Gemini sites (the real-site page steps were driven by hand in a cloud browser),
+> signed-in ChatGPT, long sessions, usage-limit and captcha behaviour, Claude/DeepSeek adapters, any use inside the Lumus TUI.
+> Details are in "Tested" below.
+
+# Lumus loop: web brain + free-model hands (experimental)
+
+Standalone tool, not wired into the TUI yet. Lives in script/ of the `demo` branch.
+
+Idea: a strong model in a web chat (ChatGPT web is the default adapter, Gemini is the second one) is the **brain** and writes the plan. A weaker free
+model behind an OpenAI-compatible API is the **hands** and writes the code. Tests run automatically.
+If they fail, the failing output and the current files go back to the brain in the same chat. It stops
+when tests pass or after max rounds (default 5) and writes `.lumus-loop/report.md`.
+
+## Quick start (Linux, Chrome)
+    git clone -b demo https://github.com/Lumus-ai/lumus-code.git ~/lumus-code-demo
+    pip install --user playwright     # on Arch: sudo pacman -S python-playwright (no browser download needed)
+    python3 ~/lumus-code-demo/script/lumus-loop.py chrome   # opens Chrome with the debug port; ChatGPT works logged out
+    mkdir -p ~/.keys && nano ~/.keys/hands.txt               # paste your Gemini API key, save, then: chmod 600 ~/.keys/hands.txt
+    export LUMUS_HANDS_URL=https://generativelanguage.googleapis.com/v1beta/openai LUMUS_HANDS_MODEL=gemini-3.1-flash-lite LUMUS_HANDS_KEY_FILE=$HOME/.keys/hands.txt
+    mkdir ~/myproj && cd ~/myproj && nano task.txt           # describe the task, include the test file in the project
+    python3 ~/lumus-code-demo/script/lumus-loop.py init task.txt --test "python3 -m unittest discover -s tests"
+    python3 ~/lumus-code-demo/script/lumus-loop.py run       # chatgpt adapter is the default
+
+## Setup (Linux)
+    pip install playwright            # attaches to your Chrome, no browser download
+    python3 script/lumus-loop.py chrome   # starts Chrome with a localhost-only debug port and a dedicated profile
+    # ChatGPT works logged out (guest); for Gemini log in in that window once. Keep it open
+    export LUMUS_HANDS_URL=https://generativelanguage.googleapis.com/v1beta/openai   # or https://openrouter.ai/api/v1
+    export LUMUS_HANDS_MODEL=gemini-3.1-flash-lite                                   # or an openrouter/free model
+    export LUMUS_HANDS_KEY_FILE=~/.keys/hands.txt                                     # key is read from the file, never printed
+
+## Use
+    cd your-project
+    python3 /path/to/script/lumus-loop.py init task.txt --test "pytest -q" --max-rounds 5
+    python3 /path/to/script/lumus-loop.py run                      # default adapter chatgpt; add --adapter gemini for Gemini
+
+## Manual mode (no browser automation)
+    lumus-loop.py brain-prompt            # writes .lumus-loop/round-N/brain-prompt.md; paste it into any chat
+    lumus-loop.py brain-reply answer.md   # save the chat's answer to a file and feed it back
+    lumus-loop.py step                    # hands write the code, tests run
+Repeat until PASS or the round limit. The brain must answer with three heading lines: PLAN, HANDS TASK, STATUS
+(CONTINUE or DONE). A reply in another shape is rejected, nothing changes, ask the brain again.
+Optional fallback: `brain-api` with LUMUS_BRAIN_URL / LUMUS_BRAIN_MODEL / LUMUS_BRAIN_KEY_FILE.
+
+## Safety and caveats
+- The debug port is bound to 127.0.0.1 but gives full control of that Chrome profile. Use the dedicated profile
+  (`~/.lumus-loop-chrome`), not your daily one, and close it when done.
+- Automating a consumer chat UI may be against that service's terms. Captchas, login prompts and usage limits
+  stop the loop with an error; use manual mode then.
+- Selectors for the chat page live in `lumus_loop_web.py` (ADAPTERS) and can break when the page changes. Gemini and ChatGPT
+  (guest) selectors were checked by hand against the live sites on 2026-10-14. Claude / DeepSeek are future adapters.
+- Hands can only write files inside the project directory (paths with .., absolute paths, .git and .lumus-loop are refused,
+  all checked before any write). Tests run your command with your shell: only use test commands you trust.
+- One web chat per task: the chat URL is stored in `.lumus-loop/state.json` so later rounds keep context.
+
+## Tested (2026-10-14)
+Automatic (unit / stub): `python3 -m unittest test_lumus_loop test_lumus_loop_web_stub` in script/ (reply parser, path safety, fail/pass
+loop, max rounds, reply cleaning, big-file prompt handling, and the Playwright path against a local stub chat page with real Chrome).
+
+Real ChatGPT guest web + Gemini flash-lite hands, driven through a cloud browser: the Playwright path could NOT be used there
+(the cloud browser gives no CDP port, and a datacenter Chrome gets a Cloudflare "Just a moment" page), so the page steps (type
+prompt, click send, wait until the reply stops changing) were run by hand with the same selectors the adapter uses. The loop
+itself (prompt files, reply parsing, hands, tests, next round) ran automatically. On a real run (a small regex engine,
+checked against Python's re) the hands failed round 1 and round 2 (real failing tests), the brain got the failing output in
+the same chat and the tests passed in round 3. Two easier tasks passed in round 1.
+Seen limits on the guest page: a 43.7k char prompt worked, a 61.5k char prompt ended in "Unable to connect" (the loop now
+refuses prompts over 40k chars and treats such error texts as failure); a 600 line / 7.6k char reply came back complete.
+Not tested: the Playwright path on the real ChatGPT/Gemini pages, long sessions, a signed-in ChatGPT, usage-limit messages.
