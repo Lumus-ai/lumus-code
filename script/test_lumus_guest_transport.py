@@ -219,6 +219,15 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(bad.returncode, 2)
             self.assertIn("count must be a number of messages", bad.stdout)
 
+    def test_cli_post_timeout_tells_how_to_recover_without_resending(self):
+        with tempfile.TemporaryDirectory() as folder:
+            save_state(os.path.join(folder, ".lumus-guest.json"), {"base": "http://127.0.0.1:1", "room": "alpha", "token": "fixture-only"})
+            run = subprocess.run([sys.executable, "lumus-guest.py", "command", "echo hi"], env={**os.environ, "HOME": folder, "PYTHONDONTWRITEBYTECODE": "1"}, capture_output=True, text=True)
+            self.assertEqual(run.returncode, 1)
+            self.assertIn("delivery unknown", run.stdout)
+            self.assertIn("RECOVER: do NOT resend", run.stdout)
+            self.assertIn("read 6", run.stdout)
+
     def test_state_is_atomic_and_private(self):
         with tempfile.TemporaryDirectory() as folder:
             filename = os.path.join(folder, "state.json")
