@@ -14,6 +14,7 @@ OpenAI-compatible API that writes the code. Tests run automatically; failures go
   lumus-loop.py chrome                  -> start a dedicated Chrome with a localhost-only debug port (log in to Gemini there once)
   lumus-loop.py run [--adapter chatgpt]  -> whole loop: web brain -> hands -> tests, until pass or max rounds
   lumus-loop.py brain-web [--adapter chatgpt] [--cdp URL]  -> one brain turn through the web chat (one chat per task)
+  lumus-loop.py ui [--port 8787] [--dir PROJECT] [--no-open]  -> localhost web page for the whole loop (127.0.0.1 only)
   lumus-loop.py status | report
 Optional fallback: brain-api (set LUMUS_BRAIN_URL / LUMUS_BRAIN_MODEL / LUMUS_BRAIN_KEY_FILE).
 Hands config: LUMUS_HANDS_URL, LUMUS_HANDS_MODEL, LUMUS_HANDS_KEY_FILE (key is read from the file, never printed).
@@ -246,6 +247,8 @@ def main(a):
     if c == "brain-prompt": return cmd_brain_prompt(root)
     if c == "brain-reply": return cmd_brain_reply(root, rest[0])
     if c == "brain-api": return cmd_brain_api(root)
+    if c == "ui":
+        import lumus_ui; return lumus_ui.serve(int(opt(rest, "--port", 8787)), opt(rest, "--dir", "."), "--no-open" not in rest)
     if c == "chrome":
         import lumus_loop_web as web; return web.start_chrome()
     if c == "brain-web": return cmd_brain_web(root, rest)
