@@ -39,13 +39,15 @@ echo "==> 4/4 launcher: $BIN/lumus-demo"
 mkdir -p "$BIN"
 cat > "$BIN/lumus-demo" <<LAUNCHER
 #!/usr/bin/env bash
-# lumus-demo launcher (written by install.sh). Usage: lumus-demo chrome|init|run|brain-prompt|brain-reply|step|status|report|update
+# lumus-demo launcher (written by install.sh). Usage: lumus-demo [--choose] | ui | chrome|init|run|brain-prompt|brain-reply|step|status|report|update
 DIR="$DIR"
 VENV="$VENV"
 export LUMUS_HANDS_URL="\${LUMUS_HANDS_URL:-https://generativelanguage.googleapis.com/v1beta/openai}"
 export LUMUS_HANDS_MODEL="\${LUMUS_HANDS_MODEL:-gemini-3.1-flash-lite}"
 export LUMUS_HANDS_KEY_FILE="\${LUMUS_HANDS_KEY_FILE:-\$HOME/.keys/hands.txt}"
 case "\${1:-}" in
+  "") set -- start ;;
+  --choose) set -- start --choose ;;
   update) exec git -C "\$DIR" pull --ff-only ;;
   run|step|hands)
     if [ ! -s "\$LUMUS_HANDS_KEY_FILE" ]; then
@@ -61,6 +63,7 @@ echo
 echo "Done."
 case ":$PATH:" in *":$BIN:"*) ;; *) echo "NOTE: $BIN is not in your PATH. Add it:  export PATH=\"\$HOME/.local/bin:\$PATH\"  (put the line in ~/.bashrc or ~/.zshrc)";; esac
 echo "1) Paste your own Gemini API key into $KEYS/hands.txt  (nano $KEYS/hands.txt)"
-echo "2) lumus-demo chrome                                   # opens Chrome with a local debug port (ChatGPT works logged out)"
+echo "2) lumus-demo                                          # first launch asks: local chat page or terminal"
+echo "   lumus-demo chrome                                   # opens Chrome with a local debug port (ChatGPT works logged out)"
 echo "3) cd your-project && lumus-demo init task.txt --test \"python3 -m unittest discover -s tests\""
 echo "4) lumus-demo run"
