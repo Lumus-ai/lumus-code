@@ -50,12 +50,11 @@ try:
         pg.wait_for_selector("text=Подтверди действие"); pg.click("[data-dec=allow]"); pg.wait_for_selector("text=Готово:"); assert calls["hands"] == 1, calls
         pg.click("#chipHands"); pg.wait_for_selector("text=Подключено"); shot("p4-providers-dark.png")
         pg.click("[data-popen=custom]"); pg.fill("#pcn", "Мой сервер"); pg.fill("#pcu", "http://127.0.0.1:%d" % c.server_address[1]); pg.fill("#pck", KEY); pg.click("[data-pconn=custom]")
-        pg.wait_for_selector("text=Мой сервер"); pg.click("[data-pid=custom-moy-server] [data-pact=models]") if pg.query_selector("[data-pid=custom-moy-server]") else None
+        pg.wait_for_selector("text=Мой сервер"); pg.click("[data-pid^=custom-] [data-pact=models]") if pg.query_selector("[data-pid^=custom-]") else None
         pg.wait_for_selector("text=Моделей: 2"); pg.click("[data-pvfree]"); shot("p5-providers-models-dark.png")
-        pg.fill("[data-pm=custom-moy-server]", "mini-free-instruct"); pg.click("[data-pid=custom-moy-server] [data-pact=test]"); pg.wait_for_selector("text=Ответ модели: ok")
-        pg.click("[data-pid=custom-moy-server] [data-pact=select]"); pg.wait_for_selector("text=Активный: mini-free-instruct"); shot("p6-providers-switched-dark.png")
+        pg.fill("[data-pm^=custom-]", "mini-free-instruct"); pg.click("[data-pid^=custom-] [data-pact=test]"); pg.wait_for_selector("text=Ответ модели: ok")
+        pg.click("[data-pid^=custom-] [data-pact=select]"); pg.wait_for_selector("text=Активный: mini-free-instruct"); shot("p6-providers-switched-dark.png")
         st = json.load(urllib.request.urlopen("http://127.0.0.1:8792/api/state")); assert st["hands"]["provider"] == "Мой сервер" and st["hands"]["model"] == "mini-free-instruct", st["hands"]
-        pg.click(".seg [data-theme=light]") if pg.query_selector(".seg [data-theme=light]") else None
         pg.click("#mclose")
         sp = os.path.join(cfg, "lumus-demo"); allfiles = [os.path.join(r, f) for r, _, fs in os.walk(sp) for f in fs]
         assert all(oct(os.stat(f).st_mode & 0o777) == "0o600" for f in allfiles), [(f, oct(os.stat(f).st_mode)) for f in allfiles]
