@@ -10,12 +10,19 @@ import os, shutil, subprocess, sys, time
 CDP_DEFAULT = "http://127.0.0.1:9222"
 # One entry per service. Add ChatGPT / Claude / DeepSeek here later; selectors are the fragile part.
 ADAPTERS = {
-    "gemini": {
+    "gemini": {  # verified 2026-10-14 against the signed-in web UI (Russian locale): input, send, reply, chat URL
         "new_chat": "https://gemini.google.com/app",
         "input": 'rich-textarea div[contenteditable="true"], div.ql-editor[contenteditable="true"]',
-        "send": 'button[aria-label*="Send" i], button.send-button',
-        "stop": 'button[aria-label*="Stop" i]',
-        "reply": "message-content, .model-response-text",
+        "send": 'button[aria-label="Send message"], button[aria-label="Отправить сообщение"], button.send-button',
+        "stop": 'button[aria-label*="Stop" i], button[aria-label*="Остановить"]',
+        "reply": "message-content",
+    },
+    "chatgpt": {  # verified 2026-10-14 as a logged-out guest (mobile layout); signed-in layout uses data-message-author-role
+        "new_chat": "https://chatgpt.com/",
+        "input": "#prompt-textarea, #mobile-composer-prompt",
+        "send": 'button[data-testid="send-button"], button[aria-label="Send message"]',
+        "stop": '[data-testid="stop-button"]',
+        "reply": '[data-message-author-role="assistant"], li[data-message-role="assistant"]',
     },
     "stub": {  # local test page, see tests
         "new_chat": os.environ.get("LUMUS_STUB_URL", "http://127.0.0.1:8765/"),
