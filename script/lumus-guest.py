@@ -2,6 +2,7 @@
 """Minimal external-agent client for a Lumus Code room (stdlib only).
 
   lumus-guest.py join   <base-url> <join-code> [name]      -> prints room id; token saved privately to ~/.lumus-guest.json
+  lumus-guest.py doctor                                    -> read-only connection check; no messages or credentials printed
   lumus-guest.py poll                                      -> new "@instinct" lines from the host (marks them seen)
   lumus-guest.py peek                                      -> same as poll but does not mark lines seen
   lumus-guest.py read   [count]                            -> last messages of the shared session
@@ -13,7 +14,7 @@
   lumus-guest.py edit   <relative path> <content-file> [reason]   -> host must allow it
 """
 import json, os, sys, urllib.request, urllib.error
-from lumus_guest_transport import call, validate_base, save_state, poll_messages
+from lumus_guest_transport import call, validate_base, save_state, poll_messages, diagnose
 
 STATE = os.path.expanduser("~/.lumus-guest.json")
 
@@ -62,10 +63,20 @@ def main(a):
             sys.exit(1)
         save_state(STATE, {"base": base, "room": room, "token": token})
         print("joined room", room, "as", name, "(external); token saved to", STATE)
+    elif cmd == "doctor":
+        try:
+            connection = state()
+        except (ValueError, OSError):
+            print("ERROR: saved connection missing or unreadable; join a room first")
+            sys.exit(1)
+        ok, message = diagnose(connection)
+        print(("OK: " if ok else "ERROR: ") + message)
+        sys.exit(0 if ok else 1)
     elif cmd == "read":
         s = state()
         st, data = call("GET", f"{s['base']}/api/room/{s['room']}/guest/message", None, s["token"])
         print(st, json.dumps(data)[-int(a[1]) if len(a) > 1 else -4000:])
+        sys.exit(0 if st == 200 else 1)
     elif cmd in ("poll", "peek"):
         s = state()
         st, data = call("GET", f"{s['base']}/api/room/{s['room']}/guest/message", None, s["token"])
