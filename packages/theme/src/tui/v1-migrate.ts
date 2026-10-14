@@ -145,6 +145,7 @@ function migrateMode(theme: Theme, mode: Mode): ThemeDefinition {
       // Only names that always resolve: `accent` and `interactive` fall back to
       // gray when the source theme has no chromatic hue, and a monochrome theme
       // legitimately renders every backend the same.
+      decoration: { star: textMuted },
       backend: {
         bash: "$text.muted",
         nu: "$hue.accent.300",
@@ -507,4 +508,4 @@ function ansi(code: number) {
     return RGBA.fromInts(gray, gray, gray)
   }
   return RGBA.fromInts(0, 0, 0)
-}
+    }
