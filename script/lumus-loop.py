@@ -195,25 +195,61 @@ def cmd_run(root, a):
             if e.code not in (0, 1): raise   # 1 = tests failed, loop goes on; anything else is a real error
     s = load(root); print(s["result"]); print(read(os.path.join(sd(root), "report.md")))
 
-def cmd_hands(root):
+def file_changes(root, files):
+    """What the hands want to write: [{path, status new|changed|same, diff}]. Diff is a unified diff, trimmed."""
+    import difflib
+    out = []
+    for rel, body in files:
+        full = safe_path(root, rel)
+        try: old = open(full).read()
+        except (OSError, UnicodeDecodeError): old = None
+        if old is None: status = "new"
+        elif old == body: status = "same"
+        else: status = "changed"
+        lines = list(difflib.unified_diff((old or "").splitlines(), body.splitlines(), "a/" + rel, "b/" + rel, lineterm="", n=2))
+        diff = "\n".join(lines[:160]) + ("\n… (diff trimmed)" if len(lines) > 160 else "")
+        out.append({"path": rel, "status": status, "diff": diff[:12000], "lines": len(body.splitlines())})
+    return out
+
+def load_providers():
+    try:
+        import importlib.util as _iu
+        _sp = _iu.spec_from_file_location("lumus_providers", os.path.join(os.path.dirname(os.path.abspath(__file__)), "lumus_providers.py"))
+        _lp = _iu.module_from_spec(_sp); _sp.loader.exec_module(_lp); return _lp
+    except Exception: return None
+
+def chat_chain(chain, prompt):
+    """Asks the providers in order. A failure (limit, error, no connection) moves on to the next one. Returns (text, name, model)."""
+    errs = []
+    for i, c in enumerate(chain):
+        try:
+            text = chat(c["url"], c["model"], c.get("keyfile") or None, prompt)
+            if errs: print("hands: switched to %s after: %s" % (c["name"], "; ".join(errs)))
+            return text, c["name"], c["model"]
+        except SystemExit as e:
+            errs.append("%s: %s" % (c["name"], str(e.code).replace("ERROR: ", "")))
+            if i + 1 < len(chain): print("hands: %s failed, trying %s" % (c["name"], chain[i + 1]["name"]))
+    raise SystemExit("all hands providers failed: " + "; ".join(errs))
+
+def cmd_hands(root, approve=None):
     s = load(root)
     if s["phase"] != "need-hands": raise SystemExit("no brain reply waiting; run brain-prompt / brain-reply first")
     d = rdir(root, s["round"])
     prompt = ("You are the hands: you write code exactly as instructed.\n\n## INSTRUCTIONS FROM THE BRAIN\n" + read(os.path.join(d, "hands-task.md")) +
               "\n\n## CURRENT FILES\n" + (project_files(root) or "(none)") +
               "\n\n## ANSWER FORMAT\nFor every file you create or change, output the COMPLETE file as:\n### FILE: relative/path.ext\n```\nfull content\n```\nNo other files, no prose needed.")
-    try:   # a provider picked in the UI (providers.json) wins over launcher defaults
-        import importlib.util as _iu
-        _sp = _iu.spec_from_file_location("lumus_providers", os.path.join(os.path.dirname(os.path.abspath(__file__)), "lumus_providers.py"))
-        _lp = _iu.module_from_spec(_sp); _sp.loader.exec_module(_lp); _lp.apply_env()
-    except Exception: pass
-    text = chat(os.environ["LUMUS_HANDS_URL"], os.environ["LUMUS_HANDS_MODEL"], os.environ.get("LUMUS_HANDS_KEY_FILE"), prompt)
-    write(os.path.join(d, "hands-reply.md"), text)
+    _lp = load_providers(); chain = []
+    if _lp:   # a provider picked in the UI (providers.json) wins over launcher defaults; the others are fallbacks
+        try: _lp.apply_env(); chain = _lp.chain()
+        except Exception: chain = []
+    if not chain: chain = [{"name": "hands", "url": os.environ["LUMUS_HANDS_URL"], "model": os.environ["LUMUS_HANDS_MODEL"], "keyfile": os.environ.get("LUMUS_HANDS_KEY_FILE")}]
+    text, by, model = chat_chain(chain, prompt)
+    write(os.path.join(d, "hands-reply.md"), text); write(os.path.join(d, "hands-by.txt"), (model if by == "hands" else "%s · %s" % (by, model)) + "\n")
     files = parse_files(text)
     if not files: raise SystemExit("hands returned no ### FILE blocks; see %s" % os.path.join(d, "hands-reply.md"))
+    changes = file_changes(root, files)   # also checks every path before anything is written
+    if approve is not None and any(c["status"] != "same" for c in changes) and not approve(changes): raise SystemExit("denied by user: files")
     written = []
-    for rel, body in files:
-        full = safe_path(root, rel)   # all paths are checked before any is written
     for rel, body in files:
         full = safe_path(root, rel); os.makedirs(os.path.dirname(full), exist_ok=True); write(full, body); written.append(rel)
     s["phase"] = "need-test"; save(root, s); print("hands wrote:", ", ".join(written))
