@@ -33,13 +33,12 @@ Optional fallback: `brain-api` with LUMUS_BRAIN_URL / LUMUS_BRAIN_MODEL / LUMUS_
   (`~/.lumus-loop-chrome`), not your daily one, and close it when done.
 - Automating a consumer chat UI may be against that service's terms. Captchas, login prompts and usage limits
   stop the loop with an error; use manual mode then.
-- Selectors for the chat page live in `lumus_loop_web.py` (ADAPTERS) and can break when the page changes. The Gemini
-  selectors are untested against the live site (see below). ChatGPT / Claude / DeepSeek are future adapters.
+- Selectors for the chat page live in `lumus_loop_web.py` (ADAPTERS) and can break when the page changes. Gemini and ChatGPT
+  (guest) selectors were checked by hand against the live sites on 2026-10-14. Claude / DeepSeek are future adapters.
 - Hands can only write files inside the project directory (paths with .., absolute paths, .git and .lumus-loop are refused,
   all checked before any write). Tests run your command with your shell: only use test commands you trust.
 - One web chat per task: the chat URL is stored in `.lumus-loop/state.json` so later rounds keep context.
 
 ## Tested
 Unit tests (reply parser incl. rendered-markdown replies, path safety, fail/pass loop, max rounds, rejected replies) and an
-end-to-end run over CDP against a local stub chat page with real Chrome + Playwright. Not tested against the real Gemini web UI
-here. Tests: `python3 -m unittest test_lumus_loop test_lumus_loop_web_stub` (in script/).
+end-to-end run over CDP against a local stub chat page with real Chrome + Playwright. Real Gemini web (signed-in, free): one full brain round and a same-chat follow-up were driven through the browser (manual step: Playwright could not attach to the cloud browser), reply parsed, hands on Gemini flash-lite, tests passed. ChatGPT guest: brain prompt answered in the correct format. The automatic Playwright path itself is only tested on the stub page. Tests: `python3 -m unittest test_lumus_loop test_lumus_loop_web_stub` (in script/).
