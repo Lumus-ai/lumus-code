@@ -55,7 +55,7 @@ try:
         pg.click("#tgManual") if "Авто" in pg.inner_text("#tgManual") else None
         pg.click("[data-fill]"); pg.fill("#cin", "Сделай add.py: функция add(a, b) возвращает сумму."); pg.keyboard.press("Enter")
         pg.wait_for_selector("#brainReply"); pg.fill("#brainReply", BRAIN); pg.click("#sendReply")
-        pg.wait_for_selector("text=Подтверди действие"); pg.click("[data-dec=allow]"); pg.wait_for_selector("text=Готово:"); assert calls["hands"] == 1, calls
+        pg.wait_for_selector("text=Записать файлы в проект"); pg.click("[data-dec=allow]"); pg.wait_for_selector("text=Подтверди действие"); pg.click("[data-dec=allow]"); pg.wait_for_selector("text=Готово:"); assert calls["hands"] == 1, calls
         pg.click("#chipHands"); pg.wait_for_selector("text=Популярные"); pg.wait_for_selector("text=нужен облачный аккаунт, пока не поддерживается" if False else "text=Все провайдеры"); shot("p4-catalog-dark.png")
         assert pg.locator("[data-pdlg=github-copilot]").count() == 0 and pg.locator("[data-pdlg=amazon-bedrock]").count() == 0, "unsupported must have no connect button"
         pg.fill("#pvq", "open"); pg.wait_for_selector("text=Результаты"); assert pg.locator("[data-pdlg=openrouter]").count() == 1 and pg.locator("[data-pdlg=localfake]").count() == 0; shot("p5-search-dark.png"); pg.fill("#pvq", "")
