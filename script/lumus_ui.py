@@ -19,15 +19,28 @@ class Worker:
     def __init__(self, root):
         self.root = os.path.abspath(root); self.lock = threading.Lock(); self.thread = None
         self.stop_flag = False; self.log = []; self.error = None; self.busy = None; self.manual = False; self.adapter = "chatgpt"
+        self.confirm = False; self.allow_chat = False; self.pending = None; self.decision = None; self.ev = threading.Event()
     def say(self, msg):
         self.log.append("%s  %s" % (time.strftime("%H:%M:%S"), msg)); self.log = self.log[-200:]
     def running(self): return self.busy is not None
+
+    def ask_confirm(self, s):
+        """Pauses before running the user's test command until the page answers (allow / allow-chat / deny) or Stop is pressed."""
+        self.decision = None; self.ev.clear()
+        self.pending = {"kind": "test", "cmd": s["test"], "cwd": self.root, "round": s["round"]}; self.say("waiting for your confirmation")
+        while not self.stop_flag and not self.ev.wait(0.2): pass
+        d = self.decision; self.pending = None
+        if d is None: return False
+        if d == "deny": self.error = "denied by user"; self.say("denied: test command was not run"); return False
+        if d == "allow-chat": self.allow_chat = True
+        return True
 
     def advance_once(self):
         """Does the next phase. Returns False when it has to wait for the user (manual brain) or the loop is finished."""
         s = core.load(self.root)
         if s["result"]: return False
         ph = s["phase"]
+        if ph == "need-test" and self.confirm and not self.allow_chat and not self.ask_confirm(s): return False
         out = io.StringIO()
         try:
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
@@ -72,9 +85,32 @@ def rd(path):
     except OSError: return ""
     return t if len(t) <= CAP else t[:CAP] + "\n… (cut, %d more chars)" % (len(t) - CAP)
 
+def detect_tests(d):
+    """Suggests a test command for the folder: {"cmd": str, "note": str}. Empty cmd = nothing found."""
+    d = os.path.abspath(d or ".")
+    def count(path):
+        n = 0
+        for dp, _, fs in os.walk(path):
+            for f in fs:
+                if f.startswith("test") and f.endswith(".py"):
+                    try: n += len(re.findall(r"^\s*def test", open(os.path.join(dp, f), errors="replace").read(), re.M))
+                    except OSError: pass
+        return n
+    if os.path.isdir(os.path.join(d, "tests")) and count(os.path.join(d, "tests")):
+        return {"cmd": "python3 -m unittest discover -s tests", "note": "%d тест(ов) в tests/" % count(os.path.join(d, "tests"))}
+    if count(d): return {"cmd": "python3 -m unittest discover", "note": "%d тест(ов) в папке" % count(d)}
+    try:
+        pj = json.load(open(os.path.join(d, "package.json")))
+        if pj.get("scripts", {}).get("test"): return {"cmd": "npm test", "note": "скрипт test в package.json"}
+    except (OSError, ValueError): pass
+    try:
+        if re.search(r"^test:", open(os.path.join(d, "Makefile")).read(), re.M): return {"cmd": "make test", "note": "цель test в Makefile"}
+    except OSError: pass
+    return {"cmd": "", "note": ""}
+
 def snapshot(w):
     root = w.root
-    base = {"dir": root, "adapter": w.adapter, "manual": w.manual, "busy": w.busy, "error": w.error, "log": w.log[-40:],
+    base = {"dir": root, "adapter": w.adapter, "manual": w.manual, "busy": w.busy, "confirm": w.confirm, "allow_chat": w.allow_chat, "pending": w.pending, "error": w.error, "log": w.log[-40:],
             "hands": {"url": os.environ.get("LUMUS_HANDS_URL", ""), "model": os.environ.get("LUMUS_HANDS_MODEL", ""),
                       "key_set": bool(os.environ.get("LUMUS_HANDS_KEY_FILE") and os.path.isfile(os.environ["LUMUS_HANDS_KEY_FILE"]) and os.path.getsize(os.environ["LUMUS_HANDS_KEY_FILE"]) > 0)}}
     try: s = core.load(root)
@@ -113,6 +149,10 @@ class Handler(BaseHTTPRequestHandler):
         w = self.server.worker
         if self.path in ("/", "/index.html"):
             return self._send(200, open(os.path.join(HERE, "ui", "index.html"), "rb").read(), "text/html; charset=utf-8")
+        if self.path.startswith("/api/detect"):
+            from urllib.parse import urlparse, parse_qs
+            d = (parse_qs(urlparse(self.path).query).get("dir") or [w.root])[0]
+            return self._send(200, detect_tests(d if os.path.isdir(d) else w.root))
         if self.path == "/favicon.ico": return self._send(204, b"", "image/x-icon")
         if self.path.startswith("/api/state"): return self._send(200, snapshot(w))
         if self.path.startswith("/api/prompt"):
@@ -135,6 +175,7 @@ class Handler(BaseHTTPRequestHandler):
             if not os.path.isdir(d): return self._send(400, {"error": "project folder does not exist: " + d})
             w.root = os.path.abspath(d); w.adapter = data.get("adapter") if data.get("adapter") in ADAPTERS else "chatgpt"
             w.manual = bool(data.get("manual")); w.log = []; w.error = None
+            w.confirm = bool(data.get("confirm")); w.allow_chat = False; w.pending = None
             tf = os.path.join(core.sd(w.root), "task-input.txt"); os.makedirs(core.sd(w.root), exist_ok=True); core.write(tf, task + "\n")
             try:
                 with contextlib.redirect_stdout(io.StringIO()): core.cmd_init([tf, "--test", test, "--dir", w.root, "--max-rounds", str(mr)])
@@ -143,12 +184,17 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/settings":
             if data.get("adapter") in ADAPTERS: w.adapter = data["adapter"]
             if "manual" in data: w.manual = bool(data["manual"])
+            if "confirm" in data: w.confirm = bool(data["confirm"])
             return self._send(200, snapshot(w))
         if p in ("/api/run", "/api/round"):
             if "manual" in data: w.manual = bool(data["manual"])
+            if "confirm" in data: w.confirm = bool(data["confirm"])
             if data.get("adapter") in ADAPTERS: w.adapter = data["adapter"]
             return self._send(200 if w.start("run" if p == "/api/run" else "round") else 409, snapshot(w))
-        if p == "/api/stop": w.stop_flag = True; return self._send(200, snapshot(w))
+        if p == "/api/confirm":
+            if not w.pending or data.get("decision") not in ("allow", "allow-chat", "deny"): return self._send(409, {"error": "nothing to confirm"})
+            w.decision = data["decision"]; w.ev.set(); time.sleep(0.05); return self._send(200, snapshot(w))
+        if p == "/api/stop": w.stop_flag = True; w.ev.set(); return self._send(200, snapshot(w))
         if p == "/api/brain-reply":
             if w.running(): return self._send(409, {"error": "a step is running"})
             tmp = os.path.join(core.sd(w.root), "ui-brain-reply.md"); core.write(tmp, str(data.get("text", "")))
