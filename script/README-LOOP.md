@@ -3,6 +3,7 @@
 > a real ChatGPT guest brain + Gemini flash-lite hands run that failed 2 rounds and passed in round 3; unit tests and a stub-page Playwright test.
 > NOT tested: the Playwright auto-mode on the real ChatGPT / Gemini sites (the real-site page steps were driven by hand in a cloud browser),
 > install.sh on Arch/Archcraft (tested only with a fresh fake HOME on another Linux box), signed-in ChatGPT, long sessions, usage-limit and captcha behaviour, Claude/DeepSeek adapters, any use inside the Lumus TUI.
+> Web UI (`lumus-demo ui`): tested with a fake brain/hands (API tests, real-Chrome screenshots, auto mode against the stub page); NOT tested against the real ChatGPT/Gemini pages.
 > Details are in "Tested" below.
 
 # Lumus loop: web brain + free-model hands (experimental)
@@ -25,6 +26,8 @@ It clones this branch to ~/lumus-code-demo, makes a private venv with playwright
     cd ~/myproj                            # a folder with your tests (e.g. tests/) and a task.txt describing the task
     lumus-demo init task.txt --test "python3 -m unittest discover -s tests"
     lumus-demo run                         # chatgpt adapter is the default; add --adapter gemini for Gemini
+**Web page instead of the terminal:** `lumus-demo ui` opens http://127.0.0.1:8787 (this machine only). Create the loop from a form, watch rounds
+(brain prompt/reply, hands files, test output), Run / Run next round / Stop, manual brain mode (copy prompt, paste reply), report. The API key is never shown.
 Other commands: `brain-prompt`, `brain-reply <file>`, `step`, `status`, `report`.
 
 ## Manual setup (without the installer)
@@ -71,4 +74,5 @@ checked against Python's re) the hands failed round 1 and round 2 (real failing 
 the same chat and the tests passed in round 3. Two easier tasks passed in round 1.
 Seen limits on the guest page: a 43.7k char prompt worked, a 61.5k char prompt ended in "Unable to connect" (the loop now
 refuses prompts over 40k chars and treats such error texts as failure); a 600 line / 7.6k char reply came back complete.
+Web UI (`lumus_ui.py`): `test_lumus_ui.py` (API: init, manual brain, fail then pass, host/header guards, key never returned), `test_lumus_ui_stub.py` (auto mode through the UI backend against the stub chat page in real Chrome), `e2e_ui_screenshots.py` (real Chrome, desktop + narrow screenshots, no JS errors).
 Not tested: the Playwright path on the real ChatGPT/Gemini pages, long sessions, a signed-in ChatGPT, usage-limit messages.
