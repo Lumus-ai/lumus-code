@@ -37,25 +37,36 @@ class ChatTests(unittest.TestCase):
         self.call("/api/run", {"manual": True}); self.until(lambda s: not s["busy"], "brain wait")
         self.assertEqual(self.call("/api/brain-reply", {"text": BRAIN})[0], 200)
         self.call("/api/run", {"manual": True})
+    def files_card(self, decision="allow"):
+        s = self.until(lambda s: s["pending"], "files card")
+        self.assertEqual(s["pending"]["kind"], "files"); self.assertEqual(s["pending"]["files"][0]["path"], "add.py"); self.assertEqual(s["pending"]["files"][0]["status"], "new")
+        self.assertFalse(os.path.exists(self.proj + "/add.py"))      # nothing is written before the answer
+        self.assertEqual(self.call("/api/confirm", {"decision": decision})[0], 200)
     def test_detect(self):
         d = self.call("/api/detect?dir=" + self.proj)[1]; self.assertEqual(d["cmd"], "python3 -m unittest discover -s tests"); self.assertIn("2", d["note"])
         empty = tempfile.mkdtemp(); self.assertEqual(self.call("/api/detect?dir=" + empty)[1]["cmd"], ""); shutil.rmtree(empty)
     def test_confirm_allow(self):
-        self.start(); s = self.until(lambda s: s["pending"], "pending")
+        self.start(); self.files_card(); self.assertTrue(self.until(lambda s: s["phase"] == "need-test", "files written")); s = self.until(lambda s: s["pending"] and s["pending"]["kind"] == "test", "pending")
         self.assertEqual(s["pending"]["cmd"], "python3 -B -m unittest discover -s tests"); self.assertEqual(s["phase"], "need-test")
         self.assertFalse(os.path.exists(self.proj + "/.lumus-loop/round-1/test-output.txt"))     # not run before the user says yes
         self.assertEqual(self.call("/api/confirm", {"decision": "allow"})[0], 200)
         s = self.until(lambda s: s["result"], "result"); self.assertEqual(s["result"], "PASSED in round 1"); self.assertFalse(s["allow_chat"])
+    def test_files_deny(self):
+        self.start(); self.files_card("deny"); s = self.until(lambda s: not s["busy"], "idle")
+        self.assertEqual(s["error"], "denied by user: files"); self.assertFalse(os.path.exists(self.proj + "/add.py")); self.assertEqual(s["phase"], "need-hands")
+    def test_files_allow_chat_skips_next_files_card(self):
+        self.start(); self.files_card("allow-chat"); self.until(lambda s: s["pending"] and s["pending"]["kind"] == "test", "test card"); self.assertTrue(self.call("/api/state")[1]["allow_files"])
+        self.call("/api/stop", {})
     def test_confirm_deny(self):
-        self.start(); self.until(lambda s: s["pending"], "pending"); self.call("/api/confirm", {"decision": "deny"})
+        self.start(); self.files_card(); self.until(lambda s: s["pending"] and s["pending"]["kind"] == "test", "pending"); self.call("/api/confirm", {"decision": "deny"})
         s = self.until(lambda s: not s["busy"], "idle"); self.assertEqual(s["error"], "denied by user"); self.assertIsNone(s["result"]); self.assertEqual(s["phase"], "need-test")
     def test_confirm_allow_chat_and_stop(self):
-        self.start(); self.until(lambda s: s["pending"], "pending"); self.call("/api/confirm", {"decision": "allow-chat"})
+        self.start(); self.files_card(); self.until(lambda s: s["pending"] and s["pending"]["kind"] == "test", "pending"); self.call("/api/confirm", {"decision": "allow-chat"})
         s = self.until(lambda s: s["result"], "result"); self.assertTrue(s["allow_chat"])
         self.call("/api/init", {"task": "t", "test": "true", "dir": self.proj, "manual": True, "confirm": True})   # new chat: permission is reset
         self.assertFalse(self.call("/api/state")[1]["allow_chat"])
         self.call("/api/run", {"manual": True}); self.until(lambda s: not s["busy"], "brain wait"); self.call("/api/brain-reply", {"text": BRAIN}); self.call("/api/run", {"manual": True})
-        self.until(lambda s: s["pending"], "pending 2"); self.call("/api/stop", {}); s = self.until(lambda s: not s["busy"], "stopped"); self.assertIsNone(s["pending"]); self.assertIsNone(s["result"])
+        self.until(lambda s: s["pending"] and s["pending"]["kind"] == "test", "pending 2"); self.call("/api/stop", {}); s = self.until(lambda s: not s["busy"], "stopped"); self.assertIsNone(s["pending"]); self.assertIsNone(s["result"])
     def test_no_confirm_without_ask(self):
         self.assertEqual(self.call("/api/confirm", {"decision": "allow"})[0], 409)
     def test_page_is_local_only(self):
