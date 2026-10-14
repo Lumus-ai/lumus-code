@@ -125,7 +125,7 @@ def load():
         with open(_json_path()) as f: d = json.load(f)
         if isinstance(d, dict) and isinstance(d.get("providers"), dict): return d
     except (OSError, ValueError): pass
-    return {"providers": {}, "active": None}
+    return {"providers": {}, "active": None, "fallbacks": []}
 
 def save(d): _write600(_json_path(), json.dumps(d, ensure_ascii=False, indent=1) + "\n")
 
@@ -151,7 +151,8 @@ def public(d=None):
         out.append({"id": pid, "name": p["name"], "url": p["url"], "model": p.get("model", ""), "models": ms[:600],
                     "needs_key": needs, "key_set": has_key(pid) if needs else True, "custom": pid.startswith(CUSTOM_PREFIX)})
     cat = [{k: v for k, v in e.items() if k != "url"} for e in entries() if e["id"] not in d["providers"]]
-    return {"catalog": cat, "connected": out, "active": d.get("active"), "ollama": detect_ollama(), "source": _md["src"]}
+    fb = [x for x in d.get("fallbacks", []) if x in d["providers"]]
+    return {"catalog": cat, "connected": out, "active": d.get("active"), "fallbacks": fb, "ollama": detect_ollama(), "source": _md["src"]}
 
 def connect(pid, key, name=None, url=None, model=None):
     d = load(); key = (key or "").strip(); c = None if pid == "custom" or pid.startswith(CUSTOM_PREFIX) else find_entry(pid)
@@ -176,6 +177,7 @@ def disconnect(pid):
     if pid not in d["providers"]: raise ValueError("Такого провайдера нет")
     del d["providers"][pid]
     if (d.get("active") or {}).get("id") == pid: d["active"] = None
+    d["fallbacks"] = [x for x in d.get("fallbacks", []) if x != pid]
     try: os.remove(key_path(pid))
     except OSError: pass
     save(d)
@@ -263,6 +265,36 @@ def detect_ollama(timeout=0.4):
         with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=timeout) as r: n = len(json.load(r).get("models", []))
         return {"found": True, "models": n}
     except Exception: return {"found": False, "models": 0}
+
+def fallback(pid, op):
+    """Backup providers used when the active one fails (limit, error). op: add | remove | up | down."""
+    d = load()
+    if pid not in d["providers"]: raise ValueError("Такого провайдера нет")
+    fb = [x for x in d.get("fallbacks", []) if x in d["providers"] and x != pid]
+    cur = [x for x in d.get("fallbacks", []) if x in d["providers"]]
+    if op == "add":
+        if not d["providers"][pid].get("model"): raise ValueError("Сначала выбери модель этого провайдера")
+        if (d.get("active") or {}).get("id") == pid: raise ValueError("Этот провайдер уже основной")
+        cur = fb + [pid]
+    elif op == "remove": cur = fb
+    elif op in ("up", "down") and pid in cur:
+        i = cur.index(pid); j = i - 1 if op == "up" else i + 1
+        if 0 <= j < len(cur): cur[i], cur[j] = cur[j], cur[i]
+    else: raise ValueError("Неизвестное действие")
+    d["fallbacks"] = cur; save(d); return d
+
+def chain(d=None):
+    """Providers to try for the hands, in order: the active one, then the backups. Only ones that have a model and (if needed) a key."""
+    d = d or load(); a = d.get("active"); out = []
+    if not a or a.get("id") not in d["providers"]: return out
+    for pid in [a["id"]] + [x for x in d.get("fallbacks", []) if x != a["id"]]:
+        p = d["providers"].get(pid)
+        if not p: continue
+        model = a["model"] if pid == a["id"] else p.get("model", "")
+        needs = p.get("needs_key", True)
+        if not model or (needs and not has_key(pid)): continue
+        out.append({"id": pid, "name": p["name"], "url": p["url"], "model": model, "keyfile": key_path(pid) if needs else ""})
+    return out
 
 def apply_env(d=None):
     d = d or load(); a = d.get("active")
